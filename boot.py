@@ -28,6 +28,5 @@ def main_boot():
         import server
         server.start_server()
 
-if __name__ == "__main__":
-    main_boot()
+main_boot()
    

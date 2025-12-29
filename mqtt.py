@@ -1,4 +1,5 @@
 import _thread
+import network
 import time
 import ujson
 from umqtt.simple import MQTTClient
@@ -12,11 +13,46 @@ import machine
 lock = _thread.allocate_lock()
 PUBLISH_INTERVAL = 10  # seconds
 
+def disable_ap():
+    ap = network.WLAN(network.AP_IF)
+    if ap.active():
+        print("📴 Disabling AP mode")
+        ap.active(False)
+
+def wait_for_wifi(timeout=20):
+    sta = network.WLAN(network.STA_IF)
+    for i in range(timeout):
+        if sta.isconnected():
+            print("📶 WiFi ready:", sta.ifconfig())
+            return True
+        print("⏳ Waiting for WiFi...")
+        time.sleep(1)
+    return False
+
+# -------------------------------------------------
+# MQTT CALLBACK
+# -------------------------------------------------
+def mqtt_callback(topic, msg):
+    try:
+        payload = ujson.loads(msg)
+        handle_command(payload)
+    except Exception as e:
+        print("❌ Invalid MQTT payload:", e)
+
 # -------------------------------------------------
 # MQTT THREAD
 # -------------------------------------------------
 def mqtt_thread():
     cfg = config.load_config()
+
+    # 🔑 CRITICAL FIX
+    disable_ap()
+    
+    if not wait_for_wifi():
+        print("❌ WiFi never came up, aborting MQTT")
+        return
+    time.sleep(3)  # Allow network to stabilize
+
     client_id = cfg["device_id"]
     server = cfg["mqtt_server"]
     port = int(cfg.get("mqtt_port", 1883))
@@ -90,14 +126,6 @@ def handle_command(cmd):
     else:
         print("⚠️ Unknown command")
 
-# -------------------------------------------------
-# MQTT CALLBACK
-# -------------------------------------------------
-def mqtt_callback(topic, msg):
-    try:
-        payload = ujson.loads(msg)
-        handle_command(payload)
-    except Exception as e:
-        print("❌ Invalid MQTT payload:", e)
+
 
 
