@@ -108,6 +108,9 @@ def mqtt_thread():
                 with gps.lock:
                     data = gps.gps_data.copy()
                     raw = gps.gps_raw_data
+                if raw:
+                    client.publish(raw_topic, raw)
+                    print("📤 Raw GPS data published")
 
                 if data["lat"] and data["lon"]:
                     payload = {
@@ -116,7 +119,6 @@ def mqtt_thread():
                         "latitude": data["lat"],
                         "longitude": data["lon"]
                     }
-                    client.publish(raw_topic, raw)
                     client.publish(pub_topic, ujson.dumps(payload))
                     print("📤 Location published")
 
