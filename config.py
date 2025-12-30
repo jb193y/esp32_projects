@@ -3,11 +3,11 @@ import ujson
 CONFIG_FILE = 'config.json'
 
 DEFAULT_CONFIG = {
-    "device_id": "esp32_gps_01",
+    "client_id": "esp32_gps_01",
     "mode": "sta",
     "wifi_networks": [
-        {"ssid": "JayMobile", "password": "2147742366"},
-        {"ssid": "ITSHERE", "password": "2147742366"}
+        {"ssid": "ITSHERE", "password": "2147742366"},
+        {"ssid": "JayMobile", "password": "2147742366"}
     ],
     "mqtt_server": "wwww.uxpreon.com",
     "mqtt_port": 1883

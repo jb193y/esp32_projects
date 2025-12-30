@@ -43,8 +43,11 @@ def mqtt_callback(topic, msg):
 # MQTT THREAD
 # -------------------------------------------------
 def mqtt_thread():
+    print("🚀 MQTT thread started")
+    print("⏳ Reading config...")
     cfg = config.load_config()
 
+    print("🔌 WiFi check...")
     # 🔑 CRITICAL FIX
     disable_ap()
     
@@ -53,25 +56,46 @@ def mqtt_thread():
         return
     time.sleep(3)  # Allow network to stabilize
 
-    client_id = cfg["device_id"]
+    client_id = cfg["client_id"]
     server = cfg["mqtt_server"]
     port = int(cfg.get("mqtt_port", 1883))
 
+    raw_topic = f"device/{client_id}/raw"
     pub_topic = f"device/{client_id}/location"
     cmd_topic = f"device/{client_id}/command"
 
-    client = MQTTClient(client_id, server, port)
-    client.set_callback(mqtt_callback)
+    print("🔄 Connecting to MQTT broker...")
+    MAX_RETRIES = 5
+    RETRY_DELAY = 3  # seconds
 
-    try:
-        client.connect()
-        client.subscribe(cmd_topic)
-        print("✅ MQTT connected")
-        print("📡 Subscribed to:", cmd_topic)
-    except Exception as e:
-        print("❌ MQTT connection failed:", e)
-        return
+    connected = False
 
+    while True:
+        client = MQTTClient(client_id, server, port)
+        client.set_callback(mqtt_callback)
+        connected = False
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            print(f"🔄 MQTT connect attempt {attempt}...")
+            print(f"🔄 MQTT connecting... {client_id} to {server}:{port}")
+            try:
+                client.connect()
+                client.subscribe(cmd_topic)
+                connected = True
+                break
+            except Exception as e:
+                print("MQTT retry failed:", e)
+                time.sleep(RETRY_DELAY)
+
+        if not connected:
+            print("Retrying MQTT in {RETRY_DELAY}s...")
+            time.sleep(RETRY_DELAY)
+            continue
+        else:
+            break
+
+
+    print("✅ MQTT connected and subscribed to command topic")
     last_publish = 0
 
     while True:
@@ -83,6 +107,7 @@ def mqtt_thread():
             if time.time() - last_publish >= PUBLISH_INTERVAL:
                 with gps.lock:
                     data = gps.gps_data.copy()
+                    raw = gps.gps_raw_data
 
                 if data["lat"] and data["lon"]:
                     payload = {
@@ -91,6 +116,7 @@ def mqtt_thread():
                         "latitude": data["lat"],
                         "longitude": data["lon"]
                     }
+                    client.publish(raw_topic, raw)
                     client.publish(pub_topic, ujson.dumps(payload))
                     print("📤 Location published")
 
@@ -108,12 +134,12 @@ def mqtt_thread():
 def handle_command(cmd):
     print("📥 Command received:", cmd)
 
-    if cmd.get("command") == "reboot":
+    if cmd.get("command") == "REBOOT":
         print("🔁 Rebooting device...")
         time.sleep(1)
         machine.reset()
 
-    elif cmd.get("command") == "set_mode":
+    elif cmd.get("command") == "SET_MODE":
         mode = cmd.get("mode")
         if mode in ("ap", "sta"):
             cfg = config.load_config()

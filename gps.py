@@ -10,6 +10,7 @@ gps_uart = machine.UART(2, baudrate=9600, tx=17, rx=16)
 gps = MicropyGPS(location_formatting='dd')
 
 gps_data = {"lat": None, "lon": None, "timestamp": None}
+gps_raw_data = ""
 lock = _thread.allocate_lock()
 
 # ------------------------------------------------------------------
@@ -25,6 +26,8 @@ def iso_timestamp():
 # ------------------------------------------------------------------
 def gps_thread():
     global gps_data
+    global gps_raw_data
+
     buf_size = 5
     lat_buf, lon_buf = [], []
 
@@ -44,13 +47,27 @@ def gps_thread():
             except Exception:
                 continue
 
+            time.sleep(0.2)  # Allow buffer to fill
+            lock.acquire()
+            gps_raw_data="RAW GPS:" + str(gps.latitude) + " " + str(gps.longitude) + " fix:" + str(gps.fix_stat) + " sats:" + str(gps.satellites_in_use)
+            lock.release()
+            print(gps_raw_data)
             # Check for GPS fix
-            if gps.fix_stat >= 1:
+            # if gps.fix_stat >= 1:
+            if (
+                gps.latitude[0] != 0 and
+                gps.longitude[0] != 0 and
+                gps.latitude[2] in ('N', 'S') and
+                gps.longitude[2] in ('E', 'W')
+            ):
+                print("GPS fix acquired")
+                time.sleep(1)  # Allow buffer to fill
                 try:
                     # Ensure latitude/longitude arrays are complete
                     if len(gps.latitude) < 3 or len(gps.longitude) < 3:
                         continue
-
+                    
+                    print("Raw GPS data:", gps.latitude, gps.longitude)
                     # Clean the numeric values
                     lat_deg = float(str(gps.latitude[0]).strip())
                     lat_min = float(str(gps.latitude[1]).strip())
