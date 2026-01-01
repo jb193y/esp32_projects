@@ -10,7 +10,22 @@ DEFAULT_CONFIG = {
         {"ssid": "JayMobile", "password": "2147742366"}
     ],
     "mqtt_server": "10.10.10.211",
-    "mqtt_port": 1883
+    "mqtt_port": 1883,
+    "publish_every_sec": 10,
+    "move_threshold_m": 5.0,
+    "mqtt_max_retries": 5,
+    "mqtt_retry_delay": 5
+    "hdop_max": 3.0,
+    "gps_uart_id": 2,
+    "gps_baud": 9600,
+    "gps_tx": 17,
+    "gps_rx": 16,
+    "gps_avg_buf": 8,
+    "kf_process_noise": 1e-6,
+    "kf_measurement_noise": 1e-4,
+    "stationary_speed_kmh": 0.8,
+    "stationary_meters": 2.0,
+    "stationary_count_lock": 6
 }
 
 def load_config():
