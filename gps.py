@@ -10,7 +10,6 @@ gps_uart = machine.UART(2, baudrate=9600, tx=17, rx=16)
 gps = MicropyGPS(location_formatting='dd')
 
 gps_data = {"lat": None, "lon": None, "timestamp": None}
-gps_raw_data = ""
 lock = _thread.allocate_lock()
 
 # ------------------------------------------------------------------
@@ -42,60 +41,51 @@ def gps_thread():
     while True:
         if gps_uart.any():
             try:
-                c = gps_uart.read(1).decode('utf-8', 'ignore')
-                gps.update(c)
+                # Read ONE character at a time (required by MicropyGPS)
+                c = gps_uart.read(1)
+                if c:
+                    gps.update(c.decode('utf-8', 'ignore'))
             except Exception:
-                continue
+                pass
 
-            time.sleep(0.2)  # Allow buffer to fill
-            lock.acquire()
-            gps_raw_data="RAW GPS:" + str(gps.latitude) + " " + str(gps.longitude) + " fix:" + str(gps.fix_stat) + " sats:" + str(gps.satellites_in_use)
-            lock.release()
-            print(gps_raw_data)
-            # Check for GPS fix
-            # if gps.fix_stat >= 1:
-            if (
-                gps.latitude[0] != 0 and
-                gps.longitude[0] != 0 and
-                gps.latitude[2] in ('N', 'S') and
-                gps.longitude[2] in ('E', 'W')
-            ):
-                print("GPS fix acquired")
-                time.sleep(1)  # Allow buffer to fill
-                try:
-                    # Ensure latitude/longitude arrays are complete
-                    if len(gps.latitude) < 3 or len(gps.longitude) < 3:
-                        continue
-                    
-                    print("Raw GPS data:", gps.latitude, gps.longitude)
-                    # Clean the numeric values
-                    lat_deg = float(str(gps.latitude[0]).strip())
-                    lat_min = float(str(gps.latitude[1]).strip())
-                    lon_deg = float(str(gps.longitude[0]).strip())
-                    lon_min = float(str(gps.longitude[1]).strip())
+        # Check for GPS fix (works for dd formatting)
+        if (
+            gps.latitude and gps.longitude and
+            len(gps.latitude) == 2 and
+            len(gps.longitude) == 2 and
+            gps.latitude[0] != 0 and
+            gps.longitude[0] != 0
+        ):
+            try:
+                lat = gps.latitude[0]
+                lon = gps.longitude[0]
 
-                    lat = lat_deg + lat_min / 60.0
-                    lon = lon_deg + lon_min / 60.0
+                if gps.latitude[1] == 'S':
+                    lat = -lat
+                if gps.longitude[1] == 'W':
+                    lon = -lon
 
-                    if gps.latitude[2] == 'S':
-                        lat = -lat
-                    if gps.longitude[2] == 'W':
-                        lon = -lon
+                lat = smooth(lat_buf, lat)
+                lon = smooth(lon_buf, lon)
 
-                    lat = smooth(lat_buf, lat)
-                    lon = smooth(lon_buf, lon)
+                lock.acquire()
+                gps_data = {
+                    "lat": lat,
+                    "lon": lon,
+                    "timestamp": iso_timestamp()
+                }
+                lock.release()
 
-                    lock.acquire()
-                    gps_data = {
-                        "lat": lat,
-                        "lon": lon,
-                        "timestamp": iso_timestamp()
-                    }
-                    lock.release()
+                print("📍 GPS:", lat, lon)
 
-                except Exception as e:
-                    print("GPS parse error:", e)
+                # ✅ GPS updates at 1Hz → no need to recompute faster
+                time.sleep(0.9)
 
-        time.sleep(0.1)
+            except Exception as e:
+                print("GPS parse error:", e)
+
+        # ✅ Yield CPU (VERY IMPORTANT on ESP32)
+        time.sleep(0.02)
+
 # ------------------------------------------------------------------
 # END OF FILE

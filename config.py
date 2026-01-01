@@ -9,14 +9,14 @@ DEFAULT_CONFIG = {
         {"ssid": "ITSHERE", "password": "2147742366"},
         {"ssid": "JayMobile", "password": "2147742366"}
     ],
-    "mqtt_server": "wwww.uxpreon.com",
+    "mqtt_server": "10.10.10.211",
     "mqtt_port": 1883
 }
 
 def load_config():
     try:
-        with open(CONFIG_FILE, 'r') as f:
-            return ujson.load(f)
+        # with open(CONFIG_FILE, 'r') as f:
+        #     return ujson.load(f)
         save_config(DEFAULT_CONFIG)
         return DEFAULT_CONFIG
     except Exception:

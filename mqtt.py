@@ -107,11 +107,7 @@ def mqtt_thread():
             if time.time() - last_publish >= PUBLISH_INTERVAL:
                 with gps.lock:
                     data = gps.gps_data.copy()
-                    raw = gps.gps_raw_data
-                if raw:
-                    client.publish(raw_topic, raw)
-                    print("📤 Raw GPS data published")
-
+                print(data)
                 if data["lat"] and data["lon"]:
                     payload = {
                         "device_id": client_id,

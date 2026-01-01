@@ -1,6 +1,7 @@
 import config
 import wifiap
 
+
 print(">>> boot.py STARTED <<<")
 
 cfg = config.load_config()
