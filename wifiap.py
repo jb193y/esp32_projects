@@ -15,6 +15,7 @@ def connect_wifi(networks):
     sta.active(True)
     time.sleep(0.5)
 
+    sta.config(pm=network.WLAN.PM_NONE) # Disable power management for stability
     for net in networks:
         ssid = net.get("ssid")
         pwd = net.get("password")

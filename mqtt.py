@@ -58,7 +58,7 @@ def ensure_network_ready():
 
 def mqtt_thread():
     cfg = config.load_config()
-    client_id = cfg.get("device_id", "esp32_gps")
+    client_id = cfg.get("client_id", "esp32_gps")
     server = cfg.get("mqtt_server", "10.10.10.211")
     port = int(cfg.get("mqtt_port", 1883))
 
@@ -68,6 +68,7 @@ def mqtt_thread():
     last_pub_time = 0
     last_pub_lat = None
     last_pub_lon = None
+    last_save = time.time()
 
     while True:
         # Wait for Wi-Fi routing
@@ -121,6 +122,9 @@ def mqtt_thread():
                 ts = data.get("timestamp")
 
                 now = time.time()
+                if now - last_save > 1800:  # every 30 min
+                    last_save = now
+                    config.save_time(cfg)
                 should_publish = False
 
                 if lat is not None and lon is not None and ts is not None:
@@ -141,7 +145,7 @@ def mqtt_thread():
 
                     if should_publish:
                         payload = {
-                            "device_id": client_id,
+                            "client_id": client_id,
                             "timestamp": ts,
                             "latitude": lat,
                             "longitude": lon,
@@ -224,6 +228,15 @@ def handle_command(cmd):
         print("📊 Current config:", cfg)
         # (Optional) publish status back via MQTT
         # mqtt_client.publish(status_topic, ujson.dumps(cfg))
+
+    # -------------------------
+    # TIME COMMANDS
+    # -------------------------    
+    elif cmd.get("command") == "SET_TIME":
+        if "epoch" in cmd:
+            config.set_time_from_epoch(cfg, cmd["epoch"])
+        elif "timestamp" in cmd:
+            config.set_time_from_iso(cfg, cmd["timestamp"])
 
     else:
         print("⚠️ Unknown command")

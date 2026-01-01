@@ -37,7 +37,7 @@ def start_server():
                 wlan = network.WLAN(network.STA_IF)
                 ap = network.WLAN(network.AP_IF)
                 response = {
-                    "device_id": cfg.get("device_id"),
+                    "client_id": cfg.get("client_id"),
                     "mode": cfg.get("mode"),
                     "wifi_networks": cfg.get("wifi_networks", []),
                     "ip": wlan.ifconfig() if wlan.isconnected() else ap.ifconfig()
