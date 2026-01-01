@@ -3,6 +3,7 @@ import machine
 import time
 import math
 from micropyGPS import MicropyGPS
+import config
 
 # -----------------------------
 # CONFIG (tune as needed)

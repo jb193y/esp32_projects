@@ -9,12 +9,19 @@ DEFAULT_CONFIG = {
         {"ssid": "ITSHERE", "password": "2147742366"},
         {"ssid": "JayMobile", "password": "2147742366"}
     ],
+    # Time / NTP
+    "ntp": {
+        "enabled": True,
+        "server": "pool.ntp.org",
+        "timezone_offset": 0,   # UTC = 0
+        "sync_on_boot": True
+    },
     "mqtt_server": "10.10.10.211",
     "mqtt_port": 1883,
     "publish_every_sec": 10,
     "move_threshold_m": 5.0,
     "mqtt_max_retries": 5,
-    "mqtt_retry_delay": 5
+    "mqtt_retry_delay": 5,
     "hdop_max": 3.0,
     "gps_uart_id": 2,
     "gps_baud": 9600,
