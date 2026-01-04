@@ -4,6 +4,8 @@ import time
 import math
 from micropyGPS import MicropyGPS
 import config
+from imu import is_moving, imu_accel_vector
+import math
 
 # -----------------------------
 # CONFIG (tune as needed)
@@ -103,6 +105,20 @@ def estimate_confidence_m(hdop, sats):
     if sats is not None and sats < 5:
         base *= 1.5
     return base
+
+def normalize(x, y):
+    mag = math.sqrt(x*x + y*y)
+    if mag == 0:
+        return 0, 0
+    return x / mag, y / mag
+
+def direction_correlates(imu_ax, imu_ay, gps_dx, gps_dy):
+    imu_x, imu_y = normalize(imu_ax, imu_ay)
+    gps_x, gps_y = normalize(gps_dx, gps_dy)
+
+    dot = imu_x * gps_x + imu_y * gps_y
+    return dot > -0.2   # tolerate some noise
+
 
 class Kalman1D:
     def __init__(self, q=KALMAN_Q, r=KALMAN_R):
