@@ -7,16 +7,20 @@ import time
 import machine
 import _thread
 
-ALLOWED_SECTIONS = {
-    "wifi", "mqtt", "gps", "app", "device", "time", "ota", "server", "imu"
-}
+ALLOWED_SECTIONS = {"wifi", "mqtt", "gps", "device", "time", "ota", "server", "imu", "base"}
+
+def reboot_response(msg):
+    _start_delayed_reset()
+    return {"status": "ok", "message": msg}
+
+def _start_delayed_reset():
+    _thread.start_new_thread(_reset_thread, ())
+
+def _reset_thread():
+    time.sleep(2)
+    machine.reset()
 
 def start_server():
-    """
-    Minimal setup server.
-      GET  /status
-      POST /update  (grouped config)
-    """
     cfg = config.load_config()
     port = int(cfg.get("server", {}).get("port", 80))
 
@@ -40,10 +44,8 @@ def start_server():
 
             if method == "GET" and path == "/status":
                 response = handle_status()
-
             elif method == "POST" and path == "/update":
                 response = handle_update(request)
-
             else:
                 response = {"status": "error", "message": "Invalid endpoint"}
 
@@ -57,7 +59,6 @@ def start_server():
                 pass
         finally:
             conn.close()
-
 
 def handle_status():
     cfg = config.load_config()
@@ -73,7 +74,7 @@ def handle_status():
     return {
         "status": "ok",
         "device": cfg.get("device"),
-        "app": cfg.get("app"),
+        "base": cfg.get("base"),
         "wifi": cfg.get("wifi"),
         "mqtt": cfg.get("mqtt"),
         "gps": cfg.get("gps"),
@@ -82,7 +83,6 @@ def handle_status():
         "server": cfg.get("server"),
         "network": net_info
     }
-
 
 def handle_update(request):
     try:
@@ -106,6 +106,26 @@ def handle_update(request):
     if not patch:
         return {"status": "error", "message": "No valid config sections provided"}
 
+    # Validate: base.* only if resulting device.type == "base"
+    current = config.load_config()
+    current_device = current.get("device", {})
+    new_device = dict(current_device)
+    if "device" in patch:
+        new_device.update(patch["device"])
+
+    new_type = new_device.get("type", "rover")
+
+    if "base" in patch and new_type != "base":
+        return {"status": "error", "message": "base.* is only allowed when device.type == 'base'"}
+
+    if new_type == "base":
+        # ensure known_lat/lon exist either already or in patch
+        base_now = dict(current.get("base", {}))
+        base_now.update(patch.get("base", {}))
+        if base_now.get("known_lat") is None or base_now.get("known_lon") is None:
+            return {"status": "error", "message": "device.type='base' requires base.known_lat and base.known_lon"}
+
+    # Apply update
     cfg = config.update_config(patch)
 
     # Force STA mode after provisioning
@@ -113,11 +133,6 @@ def handle_update(request):
     config.save_config(cfg)
 
     return reboot_response("Config updated. Rebooting...")
-
-def _delayed_reboot():
-    time.sleep(2)
-    machine.reset()
-
 
 def send_json(conn, obj):
     payload = ujson.dumps(obj)
@@ -128,18 +143,3 @@ def send_json(conn, obj):
         "\r\n" % len(payload)
     )
     conn.send(payload)
-
-def reboot_response(msg):
-    _start_delayed_reset()
-    return {
-        "status": "ok",
-        "message": msg
-    }
-
-def _start_delayed_reset():
-    import _thread
-    _thread.start_new_thread(_reset_thread, ())
-
-def _reset_thread():
-    time.sleep(2)
-    machine.reset()

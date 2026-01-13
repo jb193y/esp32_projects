@@ -1,18 +1,24 @@
 {
   "device": {
-    "client_id": "esp32_gps_01",
-    "mode": "sta"
-  },
-  "app": {
+    "id": "esp32_gps_01",
     "type": "rover",
-    "base_id": "base_01",
+    "mode": "sta",
+    "base_id": "base_01"
+  },
+  "base": {
     "known_lat": 33.106,
     "known_lon": -96.633
   },
   "wifi": {
     "networks": [
-      { "ssid": "ITSHERE", "password": "" },
-      { "ssid": "JayMobile", "password": "" }
+      {
+        "ssid": "ITSHERE",
+        "password": "2147742366"
+      },
+      {
+        "ssid": "JayMobile",
+        "password": "2147742366"
+      }
     ]
   },
   "time": {
