@@ -1,6 +1,6 @@
 # imu.py
 from machine import I2C, Pin
-from mpu6050 import MPU6050
+from lib.mpu6050 import MPU6050
 import time
 
 # -----------------------------

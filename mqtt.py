@@ -5,6 +5,7 @@ import usocket as socket
 from umqtt.simple import MQTTClient
 import config
 import gps
+from ota import ota_update
 
 # -----------------------------
 # CONFIG (tune)
@@ -237,6 +238,11 @@ def handle_command(cmd):
             config.set_time_from_epoch(cfg, cmd["epoch"])
         elif "timestamp" in cmd:
             config.set_time_from_iso(cfg, cmd["timestamp"])
+    
+    elif cmd.get("command") == "OTA":
+        files = cmd.get("files", [])
+        hashes = cmd.get("sha256")
+        ota_update(cfg.ota["base_url"], files, hashes)
 
     else:
         print("⚠️ Unknown command")

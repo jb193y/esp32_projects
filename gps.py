@@ -2,7 +2,7 @@ import _thread
 import machine
 import time
 import math
-from micropyGPS import MicropyGPS
+from lib.micropyGPS import MicropyGPS
 import config
 from imu import is_moving, imu_accel_vector
 import math
@@ -14,6 +14,9 @@ cfg = config.load_config()
 HDOP_MAX = cfg.get("hdop_max", 3.0)
 MOVE_THRESHOLD_M = cfg.get("move_threshold_m", 5.0)
 PUBLISH_EVERY_SEC = cfg.get("publish_every_sec", 10)
+APP_TYPE = cfg.get("app_type", "rover")  # "rover" or "base"
+KNOWN_LAT = cfg.get("known_lat", None)
+KNOWN_LON = cfg.get("known_lon", None)
 # -----------------------------
 # GPS Settings
 # -----------------------------
@@ -138,6 +141,12 @@ class Kalman1D:
         self.x = self.x + k * (z - self.x)
         self.p = (1 - k) * self.p
         return self.x
+
+def compute_correction(measured_lat, measured_lon, known_lat, known_lon):
+    return {
+        "delta_lat": known_lat - measured_lat,
+        "delta_lon": known_lon - measured_lon
+    }
 
 # -----------------------------
 # GPS Thread

@@ -9,9 +9,14 @@ _MIN_VALID_EPOCH = 1700000000  # ~2023 sanity check
 DEFAULT_CONFIG = {
     "client_id": "esp32_gps_01",
     "mode": "sta",
+    "app_type": "rover",
+    "base_id": "base_01",
+    "known_lat": 33.106000,
+    "known_lon": -96.633000,
+    # WiFi Networks
     "wifi_networks": [
-        {"ssid": "ITSHERE", "password": "2147742366"},
-        {"ssid": "JayMobile", "password": "2147742366"}
+        {"ssid": "ITSHERE", "password": ""},
+        {"ssid": "JayMobile", "password": ""}
     ],
     # Time / NTP
     "ntp": {
@@ -39,7 +44,10 @@ DEFAULT_CONFIG = {
     "kf_measurement_noise": 1e-4,
     "stationary_speed_kmh": 0.8,
     "stationary_meters": 2.0,
-    "stationary_count_lock": 6
+    "stationary_count_lock": 6,
+    "OTA": {
+    "base_url": "http://10.10.10.211:8000/fw"
+}
 }
 
 def load_config():

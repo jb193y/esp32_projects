@@ -1,3 +1,10 @@
+import time
+
+print(">>> boot.py STARTED <<<")
+
+# Give mpremote time to interrupt
+time.sleep(3)
+
 import config
 import wifiap
 
