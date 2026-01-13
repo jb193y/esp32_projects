@@ -1,27 +1,15 @@
+# mqtt.py
 import time
 import ujson
 import network
 import usocket as socket
+import machine
 from umqtt.simple import MQTTClient
 import config
 import gps
-from ota import ota_update
+from ota import ota_update, fetch_manifest
 
-# -----------------------------
-# CONFIG (tune)
-# -----------------------------
-# Load from config
-cfg = config.load_config()
-PUBLISH_EVERY_SEC = cfg.get("publish_every_sec", 10)    # publish heartbeat at least this often
-MOVE_THRESHOLD_M = cfg.get("move_threshold_m", 5.0)     # publish immediately if moved more than this
-
-# MQTT connection retries
-MAX_RETRIES = cfg.get("mqtt_max_retries", 5)            # max connection attempts
-RETRY_DELAY = cfg.get("mqtt_retry_delay", 5)            # seconds between attempts
-
-# -----------------------------
 def haversine_m(lat1, lon1, lat2, lon2):
-    # small duplicate helper to avoid import cycles / extra deps
     import math
     R = 6371000.0
     phi1 = math.radians(lat1)
@@ -33,7 +21,6 @@ def haversine_m(lat1, lon1, lat2, lon2):
     return R * c
 
 def mqtt_callback(topic, msg):
-    # Add your command handling here
     try:
         payload = ujson.loads(msg)
         print("📥 CMD:", payload)
@@ -42,7 +29,6 @@ def mqtt_callback(topic, msg):
         print("⚠️ Bad CMD payload:", e)
 
 def ensure_network_ready():
-    # force AP off (ESP32 stability)
     ap = network.WLAN(network.AP_IF)
     if ap.active():
         ap.active(False)
@@ -59,9 +45,18 @@ def ensure_network_ready():
 
 def mqtt_thread():
     cfg = config.load_config()
-    client_id = cfg.get("client_id", "esp32_gps")
-    server = cfg.get("mqtt_server", "10.10.10.211")
-    port = int(cfg.get("mqtt_port", 1883))
+
+    dev = cfg.get("device", {})
+    mqtt_cfg = cfg.get("mqtt", {})
+
+    client_id = dev.get("client_id", "esp32_gps")
+    server = mqtt_cfg.get("server", "10.10.10.211")
+    port = int(mqtt_cfg.get("port", 1883))
+
+    PUBLISH_EVERY_SEC = int(mqtt_cfg.get("publish_every_sec", 10))
+    MOVE_THRESHOLD_M = float(mqtt_cfg.get("move_threshold_m", 5.0))
+    MAX_RETRIES = int(mqtt_cfg.get("max_retries", 5))
+    RETRY_DELAY = int(mqtt_cfg.get("retry_delay", 5))
 
     pub_topic = "device/%s/location" % client_id
     cmd_topic = "device/%s/command" % client_id
@@ -72,20 +67,18 @@ def mqtt_thread():
     last_save = time.time()
 
     while True:
-        # Wait for Wi-Fi routing
         if not ensure_network_ready():
             print("⏳ Network not ready, retrying...")
             time.sleep(2)
             continue
 
         client = MQTTClient(client_id, server, port)
-        client.set_callback(mqtt_callback)   # MUST be before subscribe
+        client.set_callback(mqtt_callback)
 
         connected = False
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 print("🔄 MQTT connecting... %s to %s:%d" % (client_id, server, port))
-                # let routing settle
                 time.sleep(2)
                 client.connect()
                 client.subscribe(cmd_topic)
@@ -102,16 +95,22 @@ def mqtt_thread():
             time.sleep(10)
             continue
 
-        # Main MQTT loop (check commands + publish when needed)
         try:
             while True:
-                # receive commands (non-blocking)
+                # receive commands
                 try:
                     client.check_msg()
                 except Exception:
                     pass
 
-                # get current GPS
+                # time persistence
+                now = time.time()
+                if now - last_save > 1800:
+                    last_save = now
+                    cfg = config.load_config()
+                    config.save_time(cfg)
+
+                # get GPS snapshot
                 gps.lock.acquire()
                 try:
                     data = dict(gps.gps_data)
@@ -122,14 +121,8 @@ def mqtt_thread():
                 lon = data.get("lon")
                 ts = data.get("timestamp")
 
-                now = time.time()
-                if now - last_save > 1800:  # every 30 min
-                    last_save = now
-                    config.save_time(cfg)
                 should_publish = False
-
                 if lat is not None and lon is not None and ts is not None:
-                    # publish on movement
                     if last_pub_lat is not None and last_pub_lon is not None:
                         try:
                             d = haversine_m(last_pub_lat, last_pub_lon, lat, lon)
@@ -138,9 +131,8 @@ def mqtt_thread():
                         except:
                             pass
                     else:
-                        should_publish = True  # first fix
+                        should_publish = True
 
-                    # publish heartbeat
                     if (now - last_pub_time) >= PUBLISH_EVERY_SEC:
                         should_publish = True
 
@@ -181,9 +173,12 @@ def handle_command(cmd):
     cfg = config.load_config()
     changed = False
 
-    # -------------------------
-    # SYSTEM COMMANDS
-    # -------------------------
+    dev = cfg.get("device", {})
+    mqtt_cfg = cfg.get("mqtt", {})
+    gps_cfg = cfg.get("gps", {})
+    ota_cfg = cfg.get("ota", {})
+    time_cfg = cfg.get("time", {})
+
     if command == "REBOOT":
         print("🔁 Rebooting device...")
         time.sleep(1)
@@ -192,64 +187,70 @@ def handle_command(cmd):
     elif command == "SET_MODE":
         mode = cmd.get("mode")
         if mode in ("ap", "sta"):
-            cfg["mode"] = mode
+            dev["mode"] = mode
+            cfg["device"] = dev
             changed = True
-            print(f"📡 Mode set to {mode}")
+            print("📡 Mode set to", mode)
 
-    # -------------------------
-    # GPS / FILTER TUNING
-    # -------------------------
     elif command == "SET_THRESH":
-        # meters
         move_m = cmd.get("move_m")
         if isinstance(move_m, (int, float)) and move_m > 0:
-            cfg["move_threshold_m"] = float(move_m)
+            mqtt_cfg["move_threshold_m"] = float(move_m)
+            cfg["mqtt"] = mqtt_cfg
             changed = True
-            print(f"📐 Move threshold set to {move_m} m")
+            print("📐 Move threshold set to", move_m, "m")
 
     elif command == "SET_HDOP":
         hdop = cmd.get("max")
         if isinstance(hdop, (int, float)) and hdop > 0:
-            cfg["hdop_max"] = float(hdop)
+            gps_cfg["hdop_max"] = float(hdop)
+            cfg["gps"] = gps_cfg
             changed = True
-            print(f"📡 HDOP max set to {hdop}")
+            print("📡 HDOP max set to", hdop)
 
     elif command == "SET_PUBLISH":
-        # seconds
         interval = cmd.get("seconds")
         if isinstance(interval, (int, float)) and interval >= 1:
-            cfg["publish_every_sec"] = int(interval)
+            mqtt_cfg["publish_every_sec"] = int(interval)
+            cfg["mqtt"] = mqtt_cfg
             changed = True
-            print(f"⏱ Publish interval set to {interval} sec")
+            print("⏱ Publish interval set to", interval, "sec")
 
-    # -------------------------
-    # DIAGNOSTICS
-    # -------------------------
     elif command == "STATUS":
         print("📊 Current config:", cfg)
-        # (Optional) publish status back via MQTT
-        # mqtt_client.publish(status_topic, ujson.dumps(cfg))
 
-    # -------------------------
-    # TIME COMMANDS
-    # -------------------------    
-    elif cmd.get("command") == "SET_TIME":
+    elif command == "SET_TIME":
         if "epoch" in cmd:
             config.set_time_from_epoch(cfg, cmd["epoch"])
         elif "timestamp" in cmd:
             config.set_time_from_iso(cfg, cmd["timestamp"])
-    
-    elif cmd.get("command") == "OTA":
-        files = cmd.get("files", [])
-        hashes = cmd.get("sha256")
-        ota_update(cfg.ota["base_url"], files, hashes)
+
+    elif command == "OTA":
+        base_url = ota_cfg.get("base_url")
+        if not base_url:
+            print("⚠️ OTA missing base_url in config")
+            return
+
+        try:
+            # Mode A: fetch manifest from server
+            if cmd.get("manifest") is True:
+                manifest_name = cmd.get("manifest_name") or ota_cfg.get("manifest", "manifest.json")
+                manifest = fetch_manifest(base_url, manifest_name)
+                ota_update(base_url, manifest=manifest)
+
+            # Mode B: explicit file list and hashes
+            else:
+                files = cmd.get("files", [])
+                hashes = cmd.get("sha256")  # dict
+                ota_update(base_url, files=files, hashes=hashes)
+
+        except Exception as e:
+            print("❌ OTA failed:", e)
+            return
 
     else:
         print("⚠️ Unknown command")
 
-    # -------------------------
-    # SAVE + REBOOT IF NEEDED
-    # -------------------------
     if changed:
         config.save_config(cfg)
         print("💾 Config saved, rebooting to apply changes...")

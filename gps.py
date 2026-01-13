@@ -1,46 +1,36 @@
+# gps.py (only top config section changed)
 import _thread
 import machine
 import time
 import math
 from lib.micropyGPS import MicropyGPS
 import config
-from imu import is_moving, imu_accel_vector
-import math
+from imu import is_moving, imu_accel_vector  # (as in your current file)
 
-# -----------------------------
-# CONFIG (tune as needed)
-# -----------------------------
 cfg = config.load_config()
-HDOP_MAX = cfg.get("hdop_max", 3.0)
-MOVE_THRESHOLD_M = cfg.get("move_threshold_m", 5.0)
-PUBLISH_EVERY_SEC = cfg.get("publish_every_sec", 10)
-APP_TYPE = cfg.get("app_type", "rover")  # "rover" or "base"
-KNOWN_LAT = cfg.get("known_lat", None)
-KNOWN_LON = cfg.get("known_lon", None)
-# -----------------------------
-# GPS Settings
-# -----------------------------
-GPS_UART_ID = cfg.get("gps_uart_id", 2)
-GPS_BAUD = cfg.get("gps_baud", 9600)
-GPS_TX = cfg.get("gps_tx", 17)
-GPS_RX = cfg.get("gps_rx", 16)
+gps_cfg = cfg.get("gps", {})
+app_cfg = cfg.get("app", {})
+mqtt_cfg = cfg.get("mqtt", {})
 
-# -----------------------------
-# GPS Processing Settings
-# -----------------------------
-HDOP_MAX = cfg.get("hdop_max", 3.0)            # accept fixes only if hdop <= this (set 99 to disable)
-AVG_BUF = cfg.get("gps_avg_buf", 8)               # moving average window
-KALMAN_Q = cfg.get("kf_process_noise", 1e-6)           # process noise (smaller = smoother)
-KALMAN_R = cfg.get("kf_measurement_noise", 1e-4)           # measurement noise (bigger = smoother)
-STATIONARY_SPEED_KMH = cfg.get("stationary_speed_kmh", 0.8)  # below this, treat as stationary (if speed available)
-STATIONARY_METERS = cfg.get("stationary_meters", 2.0)     # below this movement, treat as stationary
-STATIONARY_COUNT_LOCK = cfg.get("stationary_count_lock", 6)   # how many “stationary” updates before lock kicks in
+HDOP_MAX = gps_cfg.get("hdop_max", 3.0)
+AVG_BUF = gps_cfg.get("avg_buf", 8)
+KALMAN_Q = gps_cfg.get("kf_q", 1e-6)
+KALMAN_R = gps_cfg.get("kf_r", 1e-4)
+STATIONARY_SPEED_KMH = gps_cfg.get("stationary_speed_kmh", 0.8)
+STATIONARY_METERS = gps_cfg.get("stationary_meters", 2.0)
+STATIONARY_COUNT_LOCK = gps_cfg.get("stationary_count_lock", 6)
 
-# -----------------------------
-# UART + GPS Parser
-# -----------------------------
+APP_TYPE = app_cfg.get("type", "rover")
+KNOWN_LAT = app_cfg.get("known_lat", None)
+KNOWN_LON = app_cfg.get("known_lon", None)
+
+GPS_UART_ID = gps_cfg.get("uart_id", 2)
+GPS_BAUD = gps_cfg.get("baud", 9600)
+GPS_TX = gps_cfg.get("tx", 17)
+GPS_RX = gps_cfg.get("rx", 16)
+
 gps_uart = machine.UART(GPS_UART_ID, baudrate=GPS_BAUD, tx=GPS_TX, rx=GPS_RX)
-gps = MicropyGPS(location_formatting='dd')  # dd => [decimal, 'N'] / [decimal, 'W']
+gps = MicropyGPS(location_formatting='dd')
 
 # Shared state for other threads
 gps_data = {
