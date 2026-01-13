@@ -5,29 +5,25 @@ import config
 import network
 import time
 import machine
+import _thread
 
-# Allowed top-level config sections that mobile app can modify
 ALLOWED_SECTIONS = {
-    "wifi",
-    "mqtt",
-    "gps",
-    "app",
-    "device",
-    "time"
+    "wifi", "mqtt", "gps", "app", "device", "time", "ota", "server", "imu"
 }
 
 def start_server():
     """
-    Setup server (AP mode)
-
-    Endpoints:
-      GET  /status   → device status + current config
-      POST /update   → grouped config update (partial allowed)
+    Minimal setup server.
+      GET  /status
+      POST /update  (grouped config)
     """
+    cfg = config.load_config()
+    port = int(cfg.get("server", {}).get("port", 80))
+
     s = socket.socket()
-    s.bind(("0.0.0.0", 80))
+    s.bind(("0.0.0.0", port))
     s.listen(1)
-    print("📡 Setup server started on port 80")
+    print("📡 Setup server started on port", port)
 
     while True:
         conn, addr = s.accept()
@@ -49,26 +45,22 @@ def start_server():
                 response = handle_update(request)
 
             else:
-                response = error("Invalid endpoint")
+                response = {"status": "error", "message": "Invalid endpoint"}
 
             send_json(conn, response)
 
         except Exception as e:
             print("❌ Server error:", e)
             try:
-                send_json(conn, error(str(e)))
+                send_json(conn, {"status": "error", "message": str(e)})
             except:
                 pass
         finally:
             conn.close()
 
-# -------------------------------------------------
-# HANDLERS
-# -------------------------------------------------
 
 def handle_status():
     cfg = config.load_config()
-
     sta = network.WLAN(network.STA_IF)
     ap = network.WLAN(network.AP_IF)
 
@@ -86,58 +78,58 @@ def handle_status():
         "mqtt": cfg.get("mqtt"),
         "gps": cfg.get("gps"),
         "time": cfg.get("time"),
+        "ota": cfg.get("ota"),
+        "server": cfg.get("server"),
         "network": net_info
     }
+
 
 def handle_update(request):
     try:
         body = request.split("\r\n\r\n", 1)[1]
         data = ujson.loads(body)
     except Exception:
-        return error("Invalid JSON payload")
+        return {"status": "error", "message": "Invalid JSON payload"}
 
     if not isinstance(data, dict):
-        return error("Payload must be a JSON object")
+        return {"status": "error", "message": "Payload must be a JSON object"}
 
-    cfg = config.load_config()
-    updated = False
-
-    for section, value in data.items():
-        if section not in ALLOWED_SECTIONS:
-            print("⚠️ Ignoring forbidden section:", section)
+    # Filter allowed groups only
+    patch = {}
+    for group, group_patch in data.items():
+        if group not in ALLOWED_SECTIONS:
             continue
-
-        if not isinstance(value, dict):
-            print("⚠️ Ignoring non-dict section:", section)
+        if not isinstance(group_patch, dict):
             continue
+        patch[group] = group_patch
 
-        if section not in cfg or not isinstance(cfg[section], dict):
-            cfg[section] = {}
+    if not patch:
+        return {"status": "error", "message": "No valid config sections provided"}
 
-        cfg[section].update(value)
-        updated = True
-        print("✅ Updated section:", section)
+    cfg = config.update_config(patch)
 
-    if not updated:
-        return error("No valid config sections updated")
-
-    # Force STA mode after setup
+    # Force STA mode after provisioning
     cfg.setdefault("device", {})["mode"] = "sta"
-
     config.save_config(cfg)
 
-    return reboot_response("Config updated, rebooting to STA mode")
+    return reboot_response("Config updated. Rebooting...")
 
-# -------------------------------------------------
-# RESPONSES
-# -------------------------------------------------
+def _delayed_reboot():
+    time.sleep(2)
+    machine.reset()
+
+
+def send_json(conn, obj):
+    payload = ujson.dumps(obj)
+    conn.send(
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: application/json\r\n"
+        "Content-Length: %d\r\n"
+        "\r\n" % len(payload)
+    )
+    conn.send(payload)
 
 def reboot_response(msg):
-    # Send response first, then reboot
-    def delayed_reset():
-        time.sleep(2)
-        machine.reset()
-
     _start_delayed_reset()
     return {
         "status": "ok",
@@ -151,19 +143,3 @@ def _start_delayed_reset():
 def _reset_thread():
     time.sleep(2)
     machine.reset()
-
-def error(msg):
-    return {
-        "status": "error",
-        "message": msg
-    }
-
-def send_json(conn, obj):
-    payload = ujson.dumps(obj)
-    conn.send(
-        "HTTP/1.1 200 OK\r\n"
-        "Content-Type: application/json\r\n"
-        "Content-Length: %d\r\n"
-        "\r\n" % len(payload)
-    )
-    conn.send(payload)
