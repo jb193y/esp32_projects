@@ -104,9 +104,8 @@ def handle_command(cmd):
         time.sleep(1)
         machine.reset()
 
-def run_ota_safely(cmd):
-    """Executes the heavy OTA logic outside of the MQTT callback."""
-    gc.collect() # Free RAM before starting
+def run_ota_safely(client, cmd):
+    gc.collect()
     cfg = config.load_config()
     ota_cfg = cfg.get("ota", {})
     base_url = ota_cfg.get("base_url")
@@ -116,17 +115,29 @@ def run_ota_safely(cmd):
         return
 
     try:
+        # 1. Inform dashboard that we are STARTING (Optional)
+        # client.publish(topic, "OTA_START") 
+
         if cmd.get("manifest") is True:
             m_name = cmd.get("manifest_name") or ota_cfg.get("manifest", "manifest.json")
             print("📡 Fetching Manifest:", m_name)
             manifest = fetch_manifest(base_url, m_name)
-            ota_update(base_url, manifest=manifest)
+            # Pass the client or handle reboot here
+            success = ota_update(base_url, manifest=manifest)
         else:
             files = cmd.get("files", [])
             hashes = cmd.get("sha256", {})
-            ota_update(base_url, files=files, hashes=hashes)
+            success = ota_update(base_url, files=files, hashes=hashes)
+
+        # 2. SUCCESS! Now we notify and reboot
+        if success and client:
+            publish_reboot_message(client, "OTA Success - Rebooting")
+            time.sleep(1) # Ensure MQTT packet leaves the buffer
+            machine.reset()
+
     except Exception as e:
         print("❌ OTA Failed:", e)
+        # Optional: Notify dashboard of failure
 
 # -----------------------------
 # MQTT Callbacks
@@ -149,6 +160,26 @@ def mqtt_callback(topic, msg):
         _pending_ota_cmd = payload
     else:
         handle_command(payload)
+
+# -----------------------------
+# MQTT Helper Functions
+# ----------------------------
+def publish_reboot_message(client, reason="OTA Update"):
+    """Sends a final message before the hardware resets."""
+    try:
+        cfg = config.load_config()
+        device_id = cfg.get("device", {}).get("id", "unknown")
+        topic = f"device/{device_id}/status"
+        payload = ujson.dumps({
+            "status": "rebooting",
+            "reason": reason,
+            "timestamp": time.time()
+        })
+        client.publish(topic, payload)
+        print(f"📤 Reboot notification sent: {reason}")
+        time.sleep(1) # Give the network a moment to flush the buffer
+    except:
+        pass # Don't block the reboot if MQTT fails
 
 # -----------------------------
 # Main Thread Loop
@@ -208,7 +239,7 @@ def mqtt_thread(heartbeats=None):
 
                 # Execute OTA if flag was set in callback
                 if _pending_ota_cmd:
-                    run_ota_safely(_pending_ota_cmd)
+                    run_ota_safely(client, _pending_ota_cmd)
                     _pending_ota_cmd = None
 
                 now = time.time()
@@ -272,3 +303,4 @@ def mqtt_thread(heartbeats=None):
             try: client.disconnect()
             except: pass
             time.sleep(5)
+

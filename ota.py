@@ -94,19 +94,18 @@ def ota_update(base_url, files=None, hashes=None, manifest=None):
         for fname in files:
             download_and_stage(base_url, fname)
             staged.append(fname)
-            # Verify file integrity
+            
             if hashes and fname in hashes:
                 actual_hash = sha256_file(fname + ".new")
                 if actual_hash != hashes[fname]:
                     raise Exception("Hash mismatch: %s" % fname)
 
-        # If all downloads and hashes pass, apply them
+        # Apply changes to the filesystem
         for fname in staged:
             apply_staged(fname)
 
-        print("✅ OTA Update successful. Rebooting...")
-        time.sleep(1)
-        machine.reset()
+        print("✅ OTA files staged and applied.")
+        return True  # Return True so the caller knows it's safe to reboot
 
     except Exception as e:
         print("❌ OTA Error - rolling back:", e)
