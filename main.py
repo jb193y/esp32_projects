@@ -8,7 +8,6 @@ import mqtt
 import imu
 
 # --- Thread Monitoring Heartbeats ---
-# Shared dictionary to track when threads were last active
 heartbeats = {
     "gps": time.time(),
     "mqtt": time.time()
@@ -20,15 +19,12 @@ def monitor_threads():
         time.sleep(10)
         now = time.time()
         
-        # Check if GPS thread is alive (expected update every few seconds)
         gps_age = now - heartbeats["gps"]
-        # Check if MQTT thread is alive
         mqtt_age = now - heartbeats["mqtt"]
         
         if gps_age > 60 or mqtt_age > 60:
             print("🚨 CRITICAL: Thread hang detected!")
             print("GPS Age: %ds, MQTT Age: %ds" % (gps_age, mqtt_age))
-            print("🔄 Rebooting system...")
             time.sleep(1)
             machine.reset()
 
@@ -36,26 +32,35 @@ print("🚀 main.py started")
 
 # Load configuration
 cfg = config.load_config()
-mode = cfg.get("device", {}).get("mode", "ap")
+device_cfg = cfg.get("device", {})
+mode = device_cfg.get("mode", "ap")
+device_type = device_cfg.get("type", "rover")
 
 if mode != "sta":
-    print("📡 AP mode active — main services not started. Waiting for configuration.")
-    # In AP mode, the server.py (called from boot.py) handles everything.
+    print("📡 AP mode active — waiting for configuration.")
     while True:
         time.sleep(10)
 
-print("✅ STA mode detected — Initializing Hardware")
+print(f"✅ STA mode: {device_type.upper()} initialization")
 
-# 1. Initialize IMU (Safely before threading starts)
-imu.init_imu()
+# 1. Selective Hardware Init
+if device_type == "rover":
+    print("🧭 Initializing IMU for Rover mode...")
+    imu_present = imu.init_imu()
+    if not imu_present:
+        print("⚠️ Warning: Rover starting without IMU (GPS-only)")
+else:
+    print("📍 Base Mode: Skipping IMU initialization.")
 
-# 2. Start GPS Thread (Pass heartbeats for monitoring)
+# 2. Start GPS Thread
+# Ensure gps.gps_thread is updated to: def gps_thread(heartbeats=None):
 _thread.start_new_thread(gps.gps_thread, (heartbeats,))
 time.sleep(2)
 
-# 3. Start MQTT Thread (Pass heartbeats for monitoring)
+# 3. Start MQTT Thread
+# Ensure mqtt.mqtt_thread is updated to: def mqtt_thread(heartbeats=None):
 _thread.start_new_thread(mqtt.mqtt_thread, (heartbeats,))
 
-# 4. Run Watchdog Monitor (in the main thread)
-print("🛡️ Thread Watchdog active")
+# 4. Run Watchdog
+print("🛡️ System Monitor Active")
 monitor_threads()
