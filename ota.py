@@ -4,134 +4,111 @@ import os
 import machine
 import ubinascii
 import uhashlib
+import gc
+import time
 
 def sha256_file(path):
+    """Calculates SHA256 in chunks to save memory."""
     h = uhashlib.sha256()
-    with open(path, "rb") as f:
-        while True:
-            chunk = f.read(512)
-            if not chunk:
-                break
-            h.update(chunk)
-    return ubinascii.hexlify(h.digest()).decode()
+    try:
+        with open(path, "rb") as f:
+            while True:
+                chunk = f.read(512)
+                if not chunk: break
+                h.update(chunk)
+        return ubinascii.hexlify(h.digest()).decode()
+    except:
+        return ""
 
 def _download_stream(url, dest_tmp):
-    r = urequests.get(url)
+    """Streams file from web to flash memory directly."""
+    gc.collect()
+    # stream=True is critical for memory management
+    r = urequests.get(url, stream=True)
     if r.status_code != 200:
-        try:
-            r.close()
-        except:
-            pass
+        r.close()
         raise Exception("HTTP %d" % r.status_code)
 
-    # stream from socket to file (low memory)
     with open(dest_tmp, "wb") as f:
         while True:
+            # Read from raw socket in 512-byte chunks
             chunk = r.raw.read(512)
-            if not chunk:
-                break
+            if not chunk: break
             f.write(chunk)
-
-    try:
-        r.close()
-    except:
-        pass
+    r.close()
+    gc.collect()
 
 def download_and_stage(base_url, fname):
     url = "%s/%s" % (base_url.rstrip("/"), fname)
     tmp = fname + ".new"
-    print("OTA downloading:", url)
+    print("📡 OTA Downloading:", fname)
     _download_stream(url, tmp)
     return tmp
 
 def apply_staged(fname):
+    """Atomic swap of the new file into place."""
     tmp = fname + ".new"
     bak = fname + ".bak"
-
-    # remove older bak
     try:
-        if bak in os.listdir():
-            os.remove(bak)
-    except:
-        pass
-
-    # backup current
+        if bak in os.listdir(): os.remove(bak)
+    except: pass
     try:
-        if fname in os.listdir():
-            os.rename(fname, bak)
-    except:
-        pass
-
-    # activate new
+        if fname in os.listdir(): os.rename(fname, bak)
+    except: pass
     os.rename(tmp, fname)
 
 def rollback(files):
+    """Restores .bak files if update fails."""
     for fname in files:
-        tmp = fname + ".new"
-        bak = fname + ".bak"
+        tmp, bak = fname + ".new", fname + ".bak"
         try:
-            if tmp in os.listdir():
-                os.remove(tmp)
-        except:
-            pass
+            if tmp in os.listdir(): os.remove(tmp)
+        except: pass
         try:
             if bak in os.listdir():
-                # restore backup
-                if fname in os.listdir():
-                    os.remove(fname)
+                if fname in os.listdir(): os.remove(fname)
                 os.rename(bak, fname)
-        except:
-            pass
+        except: pass
 
 def fetch_manifest(base_url, manifest_name="manifest.json"):
+    gc.collect()
     url = "%s/%s" % (base_url.rstrip("/"), manifest_name)
     r = urequests.get(url)
     if r.status_code != 200:
-        try:
-            r.close()
-        except:
-            pass
+        r.close()
         raise Exception("Manifest HTTP %d" % r.status_code)
     data = r.json()
-    try:
-        r.close()
-    except:
-        pass
+    r.close()
     return data
 
 def ota_update(base_url, files=None, hashes=None, manifest=None):
-    """
-    Preferred: pass manifest dict:
-      {"files":[...], "sha256":{ "main.py":"...", ... }}
-    Or pass files + hashes explicitly.
-    """
     if manifest:
         files = manifest.get("files", [])
         hashes = manifest.get("sha256", {})
 
     if not files:
-        raise Exception("OTA: no files specified")
+        raise Exception("OTA: No files provided")
 
     staged = []
     try:
-        # download all first
         for fname in files:
             download_and_stage(base_url, fname)
             staged.append(fname)
-
+            # Verify file integrity
             if hashes and fname in hashes:
-                h = sha256_file(fname + ".new")
-                if h != hashes[fname]:
-                    raise Exception("Hash mismatch for %s" % fname)
+                actual_hash = sha256_file(fname + ".new")
+                if actual_hash != hashes[fname]:
+                    raise Exception("Hash mismatch: %s" % fname)
 
-        # apply all
+        # If all downloads and hashes pass, apply them
         for fname in staged:
             apply_staged(fname)
 
-    except Exception as e:
-        print("OTA failed:", e)
-        rollback(staged)
-        raise
+        print("✅ OTA Update successful. Rebooting...")
+        time.sleep(1)
+        machine.reset()
 
-    print("OTA success, rebooting")
-    machine.reset()
+    except Exception as e:
+        print("❌ OTA Error - rolling back:", e)
+        rollback(staged)
+        raise e

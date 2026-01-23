@@ -4,12 +4,16 @@ import ujson
 import network
 import machine
 import math
+import _thread
+import gc
 from umqtt.simple import MQTTClient
 
 import config
 import gps
 from ota import ota_update, fetch_manifest
 
+# --- Global Control Flags (To prevent stack overflow) ---
+_pending_ota_cmd = None
 
 # -----------------------------
 # Correction state (rover)
@@ -21,7 +25,6 @@ _latest_correction_recv_epoch = 0
 def _ensure_corr_lock():
     global _correction_lock
     if _correction_lock is None:
-        import _thread
         _correction_lock = _thread.allocate_lock()
 
 def _set_correction(corr):
@@ -42,422 +45,230 @@ def _get_correction():
     finally:
         _correction_lock.release()
 
+# -----------------------------
+# Math Helpers
+# -----------------------------
 def _meters_to_deg_lat(m):
     return m / 111320.0
 
 def _meters_to_deg_lon(m, lat):
-    # avoid division by zero near poles; good enough for your use
     c = math.cos(math.radians(lat))
-    if c == 0:
-        c = 1e-6
+    if c == 0: c = 1e-6
     return m / (111320.0 * c)
 
 def _clamp(v, lo, hi):
     return lo if v < lo else hi if v > hi else v
 
-
-# -----------------------------
 def haversine_m(lat1, lon1, lat2, lon2):
     R = 6371000.0
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlmb = math.radians(lon2 - lon1)
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi, dlmb = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
     a = (math.sin(dphi/2)**2) + math.cos(phi1) * math.cos(phi2) * (math.sin(dlmb/2)**2)
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-    return R * c
-
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
 def ensure_network_ready():
-    ap = network.WLAN(network.AP_IF)
-    if ap.active():
-        ap.active(False)
-        time.sleep(1)
-
     sta = network.WLAN(network.STA_IF)
-    if not sta.isconnected():
-        return False
-
-    ip, mask, gw, dns = sta.ifconfig()
-    if gw == "0.0.0.0":
-        return False
+    if not sta.isconnected(): return False
+    if sta.ifconfig()[2] == "0.0.0.0": return False # Check for Gateway
     return True
 
+# -----------------------------
+# Command Execution Logic
+# -----------------------------
+def handle_command(cmd):
+    """Parses standard commands. Returns True if a reboot is needed."""
+    print("📥 Command received:", cmd)
+    command = cmd.get("command")
+    cfg = config.load_config()
+    changed = False
+
+    if command == "REBOOT":
+        machine.reset()
+    elif command == "SET_MODE":
+        cfg.setdefault("device", {})["mode"] = cmd.get("mode")
+        changed = True
+    elif command == "SET_DEVICE_TYPE":
+        cfg.setdefault("device", {})["type"] = cmd.get("type")
+        changed = True
+    elif command == "SET_BASE":
+        cfg.setdefault("base", {})["known_lat"] = float(cmd.get("known_lat"))
+        cfg.setdefault("base", {})["known_lon"] = float(cmd.get("known_lon"))
+        changed = True
+    elif command == "SET_PUBLISH":
+        cfg.setdefault("mqtt", {})["publish_every_sec"] = int(cmd.get("seconds"))
+        changed = True
+
+    if changed:
+        config.save_config(cfg)
+        print("💾 Config saved, rebooting...")
+        time.sleep(1)
+        machine.reset()
+
+def run_ota_safely(cmd):
+    """Executes the heavy OTA logic outside of the MQTT callback."""
+    gc.collect() # Free RAM before starting
+    cfg = config.load_config()
+    ota_cfg = cfg.get("ota", {})
+    base_url = ota_cfg.get("base_url")
+    
+    if not base_url:
+        print("⚠️ OTA missing ota.base_url")
+        return
+
+    try:
+        if cmd.get("manifest") is True:
+            m_name = cmd.get("manifest_name") or ota_cfg.get("manifest", "manifest.json")
+            print("📡 Fetching Manifest:", m_name)
+            manifest = fetch_manifest(base_url, m_name)
+            ota_update(base_url, manifest=manifest)
+        else:
+            files = cmd.get("files", [])
+            hashes = cmd.get("sha256", {})
+            ota_update(base_url, files=files, hashes=hashes)
+    except Exception as e:
+        print("❌ OTA Failed:", e)
 
 # -----------------------------
-# Base correction helpers
-# -----------------------------
-def compute_correction(measured_lat, measured_lon, known_lat, known_lon):
-    return {
-        "delta_lat": known_lat - measured_lat,
-        "delta_lon": known_lon - measured_lon
-    }
-
-def validate_base_config(cfg):
-    device = cfg.get("device", {})
-    if device.get("type") != "base":
-        return True
-    base_cfg = cfg.get("base", {})
-    return (base_cfg.get("known_lat") is not None and base_cfg.get("known_lon") is not None)
-
-
-# -----------------------------
-# MQTT callback (commands + rover correction)
+# MQTT Callbacks
 # -----------------------------
 def mqtt_callback(topic, msg):
+    global _pending_ota_cmd
     try:
-        t = topic.decode() if isinstance(topic, (bytes, bytearray)) else str(topic)
-    except:
-        t = str(topic)
+        t = topic.decode()
+        payload = ujson.loads(msg.decode())
+    except: return
 
-    try:
-        s = msg.decode() if isinstance(msg, (bytes, bytearray)) else str(msg)
-    except:
-        s = str(msg)
-
-    # Correction topic (rover)
+    # Correction data (rover)
     if "/correction" in t or t.startswith("base/"):
-        try:
-            payload = ujson.loads(s)
-            _set_correction(payload)
-            print("🧭 Correction received:", payload)
-            return
-        except Exception as e:
-            print("⚠️ Bad correction payload:", e)
-            return
+        _set_correction(payload)
+        return
 
-    # Command topic
-    try:
-        payload = ujson.loads(s)
-        print("📥 CMD:", payload)
+    # OTA Command - Set flag for safety
+    if payload.get("command") == "OTA":
+        print("🚩 OTA Queued for execution...")
+        _pending_ota_cmd = payload
+    else:
         handle_command(payload)
-    except Exception as e:
-        print("⚠️ Bad CMD payload:", e)
-
 
 # -----------------------------
-def mqtt_thread():
+# Main Thread Loop
+# -----------------------------
+def mqtt_thread(heartbeats=None):
+    global _pending_ota_cmd
+    
+    # Increase stack size for this specific thread
+    _thread.stack_size(8192)
+    
     cfg = config.load_config()
-
     device = cfg.get("device", {})
     mqtt_cfg = cfg.get("mqtt", {})
-    base_cfg = cfg.get("base", {})
-
+    
     client_id = device.get("id", "esp32_gps")
-    device_type = device.get("type", "rover")  # rover/base
-
+    device_type = device.get("type", "rover")
     server = mqtt_cfg.get("server", "10.10.10.211")
     port = int(mqtt_cfg.get("port", 1883))
-
+    
+    pub_topic = "device/%s/location" % client_id
+    cmd_topic = "device/%s/command" % client_id
+    base_corr_topic = "base/%s/correction" % client_id
+    
+    rover_base_id = device.get("base_id")
+    rover_corr_topic = "base/%s/correction" % rover_base_id if rover_base_id else None
+    
     PUBLISH_EVERY_SEC = int(mqtt_cfg.get("publish_every_sec", 10))
     MOVE_THRESHOLD_M = float(mqtt_cfg.get("move_threshold_m", 5.0))
-    MAX_RETRIES = int(mqtt_cfg.get("max_retries", 5))
-    RETRY_DELAY = int(mqtt_cfg.get("retry_delay", 5))
-
-    # Correction tuning (optional config keys)
     CORR_TIMEOUT_S = int(mqtt_cfg.get("correction_timeout_s", 5))
     CORR_MAX_M = float(mqtt_cfg.get("correction_max_m", 5.0))
 
-    pub_topic = "device/%s/location" % client_id
-    cmd_topic = "device/%s/command" % client_id
-
-    # Base correction topic
-    base_corr_topic = "base/%s/correction" % client_id
-
-    # Rover subscribes to selected base
-    rover_base_id = device.get("base_id")  # for rover
-    rover_corr_topic = None
-    if rover_base_id:
-        rover_corr_topic = "base/%s/correction" % rover_base_id
-
     last_pub_time = 0
-    last_pub_lat = None
-    last_pub_lon = None
-    last_save = time.time()
-
-    # Validation for base mode
-    if device_type == "base" and not validate_base_config(cfg):
-        print("❌ BASE mode requires base.known_lat and base.known_lon")
-        # still run; base will just not publish corrections
+    last_pub_lat, last_pub_lon = None, None
 
     while True:
         if not ensure_network_ready():
-            print("⏳ Network not ready, retrying...")
             time.sleep(2)
             continue
 
         client = MQTTClient(client_id, server, port)
         client.set_callback(mqtt_callback)
-
-        connected = False
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                print("🔄 MQTT connecting... %s to %s:%d" % (client_id, server, port))
-                time.sleep(2)
-                client.connect()
-
-                # Always subscribe to commands
-                client.subscribe(cmd_topic)
-
-                # Rover subscribes to corrections
-                if device_type == "rover" and rover_corr_topic:
-                    client.subscribe(rover_corr_topic)
-                    print("🛰 Subscribed correction:", rover_corr_topic)
-
-                print("✅ MQTT connected")
-                print("📡 Subscribed:", cmd_topic)
-                connected = True
-                break
-            except Exception as e:
-                print("MQTT retry failed:", e)
-                time.sleep(RETRY_DELAY)
-
-        if not connected:
-            print("🚫 MQTT failed after retries. Will retry in 10s.")
-            time.sleep(10)
-            continue
-
+        
         try:
+            client.connect()
+            client.subscribe(cmd_topic)
+            if device_type == "rover" and rover_corr_topic:
+                client.subscribe(rover_corr_topic)
+            
+            print("✅ MQTT Connected to %s" % server)
+
             while True:
-                # receive messages
-                try:
-                    client.check_msg()
-                except Exception:
-                    pass
+                # Update Watchdog Heartbeat
+                if heartbeats: heartbeats["mqtt"] = time.time()
+                
+                # Check for incoming messages
+                client.check_msg()
+
+                # Execute OTA if flag was set in callback
+                if _pending_ota_cmd:
+                    run_ota_safely(_pending_ota_cmd)
+                    _pending_ota_cmd = None
 
                 now = time.time()
-                if now - last_save > 1800:
-                    last_save = now
-                    cfg = config.load_config()
-                    config.save_time(cfg)
-
-                # snapshot GPS
+                
+                # Fetch current GPS data
                 gps.lock.acquire()
                 try:
                     data = dict(gps.gps_data)
                 finally:
                     gps.lock.release()
 
-                lat = data.get("lat")
-                lon = data.get("lon")
-                ts = data.get("timestamp")
+                lat, lon, ts = data.get("lat"), data.get("lon"), data.get("timestamp")
 
-                # -----------------------------
-                # BASE: publish corrections
-                # -----------------------------
+                if lat is None or lon is None:
+                    time.sleep(0.5)
+                    continue
+
+                # --- BASE STATION LOGIC ---
                 if device_type == "base":
-                    known_lat = base_cfg.get("known_lat")
-                    known_lon = base_cfg.get("known_lon")
-
-                    if lat is not None and lon is not None and ts and known_lat is not None and known_lon is not None:
-                        corr = compute_correction(lat, lon, known_lat, known_lon)
+                    known_lat = cfg.get("base", {}).get("known_lat")
+                    known_lon = cfg.get("base", {}).get("known_lon")
+                    if known_lat is not None and (now - last_pub_time >= 1):
                         corr_payload = {
-                            "base_id": client_id,
-                            "timestamp": ts,
-                            "delta_lat": corr["delta_lat"],
-                            "delta_lon": corr["delta_lon"],
-                            "hdop": data.get("hdop"),
-                            "confidence_m": data.get("confidence_m")
+                            "base_id": client_id, "timestamp": ts,
+                            "delta_lat": known_lat - lat, "delta_lon": known_lon - lon,
+                            "hdop": data.get("hdop")
                         }
-                        # publish at low rate (1 Hz)
-                        if (now - last_pub_time) >= 1:
-                            client.publish(base_corr_topic, ujson.dumps(corr_payload))
-                            print("📡 Correction published:", corr_payload)
-                            last_pub_time = now
+                        client.publish(base_corr_topic, ujson.dumps(corr_payload))
+                        last_pub_time = now
 
-                    time.sleep(0.2)
-                    continue  # base does not publish location unless you want it to
+                # --- ROVER LOGIC ---
+                else:
+                    should_pub = (now - last_pub_time >= PUBLISH_EVERY_SEC)
+                    if not should_pub and last_pub_lat:
+                        if haversine_m(last_pub_lat, last_pub_lon, lat, lon) >= MOVE_THRESHOLD_M:
+                            should_pub = True
 
-                # -----------------------------
-                # ROVER: publish location (with correction applied)
-                # -----------------------------
-                should_publish = False
-                if lat is not None and lon is not None and ts is not None:
-                    # movement trigger
-                    if last_pub_lat is not None and last_pub_lon is not None:
-                        try:
-                            d = haversine_m(last_pub_lat, last_pub_lon, lat, lon)
-                            if d >= MOVE_THRESHOLD_M:
-                                should_publish = True
-                        except:
-                            pass
-                    else:
-                        should_publish = True
-
-                    # heartbeat
-                    if (now - last_pub_time) >= PUBLISH_EVERY_SEC:
-                        should_publish = True
-
-                    if should_publish:
+                    if should_pub:
                         corrected = False
-                        corr_used = None
-                        corr_age_s = None
-
                         corr, corr_recv = _get_correction()
-                        if corr:
-                            corr_age_s = now - corr_recv
-                            if corr_age_s <= CORR_TIMEOUT_S:
-                                try:
-                                    dlat = float(corr.get("delta_lat", 0.0))
-                                    dlon = float(corr.get("delta_lon", 0.0))
-
-                                    # bound correction magnitude in meters
-                                    max_lat = _meters_to_deg_lat(CORR_MAX_M)
-                                    max_lon = _meters_to_deg_lon(CORR_MAX_M, lat)
-
-                                    dlat = _clamp(dlat, -max_lat, max_lat)
-                                    dlon = _clamp(dlon, -max_lon, max_lon)
-
-                                    lat_corr = lat + dlat
-                                    lon_corr = lon + dlon
-
-                                    # Use corrected values
-                                    lat, lon = lat_corr, lon_corr
-                                    corrected = True
-                                    corr_used = {
-                                        "base_id": corr.get("base_id"),
-                                        "age_s": corr_age_s
-                                    }
-                                except:
-                                    pass
+                        # Apply DGPS correction if fresh enough
+                        if corr and (now - corr_recv <= CORR_TIMEOUT_S):
+                            dlat = _clamp(float(corr.get("delta_lat", 0)), -_meters_to_deg_lat(CORR_MAX_M), _meters_to_deg_lat(CORR_MAX_M))
+                            dlon = _clamp(float(corr.get("delta_lon", 0)), -_meters_to_deg_lon(CORR_MAX_M, lat), _meters_to_deg_lon(CORR_MAX_M, lat))
+                            lat += dlat
+                            lon += dlon
+                            corrected = True
 
                         payload = {
-                            "client_id": client_id,
-                            "timestamp": ts,
-                            "latitude": lat,
-                            "longitude": lon,
-                            "hdop": data.get("hdop"),
-                            "sats": data.get("sats"),
-                            "speed_kmh": data.get("speed_kmh"),
-                            "confidence_m": data.get("confidence_m"),
-                            "locked": data.get("locked"),
-                            "corrected": corrected,
-                            "correction": corr_used
+                            "client_id": client_id, "timestamp": ts, "latitude": lat, "longitude": lon,
+                            "hdop": data.get("hdop"), "sats": data.get("sats"), "locked": data.get("locked"),
+                            "corrected": corrected
                         }
-
                         client.publish(pub_topic, ujson.dumps(payload))
-                        print("📤 Published:", payload)
+                        last_pub_time, last_pub_lat, last_pub_lon = now, lat, lon
 
-                        last_pub_time = now
-                        last_pub_lat, last_pub_lon = lat, lon
-
-                time.sleep(0.2)
+                time.sleep(0.1)
 
         except Exception as e:
-            print("⚠️ MQTT loop error, will reconnect:", e)
-            try:
-                client.disconnect()
-            except:
-                pass
-            time.sleep(2)
-
-
-# -------------------------------------------------
-# COMMAND HANDLER
-# -------------------------------------------------
-def handle_command(cmd):
-    print("📥 Command received:", cmd)
-
-    command = cmd.get("command")
-    cfg = config.load_config()
-    changed = False
-
-    device = cfg.get("device", {})
-    mqtt_cfg = cfg.get("mqtt", {})
-    gps_cfg = cfg.get("gps", {})
-    ota_cfg = cfg.get("ota", {})
-
-    if command == "REBOOT":
-        print("🔁 Rebooting device...")
-        time.sleep(1)
-        machine.reset()
-
-    elif command == "SET_MODE":
-        mode = cmd.get("mode")
-        if mode in ("ap", "sta"):
-            device["mode"] = mode
-            cfg["device"] = device
-            changed = True
-            print("📡 Mode set to", mode)
-
-    elif command == "SET_DEVICE_TYPE":
-        # allow switching rover/base
-        dtype = cmd.get("type")
-        if dtype in ("rover", "base"):
-            device["type"] = dtype
-            cfg["device"] = device
-            changed = True
-            print("🧭 Device type set to", dtype)
-
-    elif command == "SET_BASE":
-        # base-only coords
-        known_lat = cmd.get("known_lat")
-        known_lon = cmd.get("known_lon")
-        if device.get("type") == "base" and isinstance(known_lat, (int, float)) and isinstance(known_lon, (int, float)):
-            cfg.setdefault("base", {})["known_lat"] = float(known_lat)
-            cfg.setdefault("base", {})["known_lon"] = float(known_lon)
-            changed = True
-            print("📍 Base coords updated")
-
-    elif command == "SET_THRESH":
-        move_m = cmd.get("move_m")
-        if isinstance(move_m, (int, float)) and move_m > 0:
-            mqtt_cfg["move_threshold_m"] = float(move_m)
-            cfg["mqtt"] = mqtt_cfg
-            changed = True
-            print("📐 Move threshold set to", move_m, "m")
-
-    elif command == "SET_HDOP":
-        hdop = cmd.get("max")
-        if isinstance(hdop, (int, float)) and hdop > 0:
-            gps_cfg["hdop_max"] = float(hdop)
-            cfg["gps"] = gps_cfg
-            changed = True
-            print("📡 HDOP max set to", hdop)
-
-    elif command == "SET_PUBLISH":
-        interval = cmd.get("seconds")
-        if isinstance(interval, (int, float)) and interval >= 1:
-            mqtt_cfg["publish_every_sec"] = int(interval)
-            cfg["mqtt"] = mqtt_cfg
-            changed = True
-            print("⏱ Publish interval set to", interval, "sec")
-
-    elif command == "SET_TIME":
-        if "epoch" in cmd:
-            config.set_time_from_epoch(cfg, cmd["epoch"])
-        elif "timestamp" in cmd:
-            config.set_time_from_iso(cfg, cmd["timestamp"])
-
-    elif command == "OTA":
-        base_url = ota_cfg.get("base_url")
-        if not base_url:
-            print("⚠️ OTA missing ota.base_url in config")
-            return
-
-        try:
-            if cmd.get("manifest") is True:
-                manifest_name = cmd.get("manifest_name") or ota_cfg.get("manifest", "manifest.json")
-                manifest = fetch_manifest(base_url, manifest_name)
-                ota_update(base_url, manifest=manifest)
-            else:
-                files = cmd.get("files", [])
-                hashes = cmd.get("sha256")
-                ota_update(base_url, files=files, hashes=hashes)
-        except Exception as e:
-            print("❌ OTA failed:", e)
-            return
-
-    else:
-        print("⚠️ Unknown command")
-
-    if changed:
-        # Validation: base.* only if base
-        if cfg.get("device", {}).get("type") != "base" and "base" in cfg:
-            # keep base section but it is ignored; no destructive delete here
-            pass
-
-        config.save_config(cfg)
-        print("💾 Config saved, rebooting to apply changes...")
-        time.sleep(1)
-        machine.reset()
+            print("⚠️ MQTT Error:", e)
+            try: client.disconnect()
+            except: pass
+            time.sleep(5)
