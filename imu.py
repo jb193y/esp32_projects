@@ -1,67 +1,76 @@
 # imu.py
 from machine import I2C, Pin
-from lib.mpu6050 import MPU6050
 import time
 
-# -----------------------------
-# I2C SETUP
-# -----------------------------
-i2c = I2C(0, scl=Pin(22), sda=Pin(21), freq=100000)
-time.sleep(0.3)
+_IMU = None
+_I2C = None
 
-imu = MPU6050(i2c, addr=0x68)
+SCL_PIN = 22
+SDA_PIN = 21
+I2C_ID = 0
+IMU_ADDR = 0x68
 
-# -----------------------------
-# CALIBRATION
-# -----------------------------
-CALIBRATION_SAMPLES = 200
+def init_imu(retries=5, delay_ms=300):
+    """
+    Initialize MPU6050 safely with retries.
+    Call this explicitly from main.py
+    """
+    global _IMU, _I2C
 
-accel_offset = [0.0, 0.0, 0.0]
-gyro_offset = [0.0, 0.0, 0.0]
+    if _IMU:
+        return _IMU
 
-print("🧭 Calibrating IMU... Keep device STILL")
+    from lib.mpu6050 import MPU6050
 
-for _ in range(CALIBRATION_SAMPLES):
-    ax, ay, az = imu.accel()
-    gx, gy, gz = imu.gyro()
+    for attempt in range(1, retries + 1):
+        try:
+            print(f"🧭 IMU init attempt {attempt}")
 
-    accel_offset[0] += ax
-    accel_offset[1] += ay
-    accel_offset[2] += (az - 1.0)  # remove gravity
+            _I2C = I2C(
+                I2C_ID,
+                scl=Pin(SCL_PIN),
+                sda=Pin(SDA_PIN),
+                freq=100_000
+            )
 
-    gyro_offset[0] += gx
-    gyro_offset[1] += gy
-    gyro_offset[2] += gz
+            time.sleep_ms(delay_ms)
 
-    time.sleep(0.01)
+            # Optional scan for visibility
+            devices = _I2C.scan()
+            print("I2C scan:", devices)
 
-accel_offset = [v / CALIBRATION_SAMPLES for v in accel_offset]
-gyro_offset = [v / CALIBRATION_SAMPLES for v in gyro_offset]
+            if IMU_ADDR not in devices:
+                raise OSError("MPU6050 not found on I2C")
 
-print("✅ IMU calibrated")
-print("Accel offset:", accel_offset)
-print("Gyro offset:", gyro_offset)
+            _IMU = MPU6050(_I2C, addr=IMU_ADDR)
 
-# -----------------------------
-# MOTION THRESHOLDS (post-calibration)
-# -----------------------------
-ACCEL_THRESH = 0.04   # g
-GYRO_THRESH = 1.5     # deg/s
+            print("✅ MPU6050 initialized")
+            return _IMU
+
+        except Exception as e:
+            print("⚠️ IMU init failed:", e)
+            _IMU = None
+            time.sleep_ms(delay_ms)
+
+    print("❌ IMU failed after retries")
+    return None
+
 
 def is_moving():
-    ax, ay, az = imu.accel()
-    gx, gy, gz = imu.gyro()
+    if _IMU is None:
+        return False
 
-    # Remove offsets
-    ax -= accel_offset[0]
-    ay -= accel_offset[1]
-    az = (az - 1.0) - accel_offset[2]
+    ax, ay, az = _IMU.accel()
+    gx, gy, gz = _IMU.gyro()
 
-    gx -= gyro_offset[0]
-    gy -= gyro_offset[1]
-    gz -= gyro_offset[2]
-
-    accel_mag = abs(ax) + abs(ay) + abs(az)
+    accel_mag = abs(ax) + abs(ay) + abs(az - 1.0)
     gyro_mag = abs(gx) + abs(gy) + abs(gz)
 
-    return accel_mag > ACCEL_THRESH or gyro_mag > GYRO_THRESH
+    return accel_mag > 0.04 or gyro_mag > 1.5
+
+
+def imu_accel_vector():
+    if _IMU is None:
+        return 0.0, 0.0
+    ax, ay, _ = _IMU.accel()
+    return ax, ay
