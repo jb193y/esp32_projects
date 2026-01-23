@@ -232,6 +232,9 @@ def mqtt_thread(heartbeats=None):
             
             print("✅ MQTT Connected to %s" % server)
 
+            if client:
+                publish_status(client, "online", "System is online")
+
             while True:
                 # Update Watchdog Heartbeat
                 if heartbeats: heartbeats["mqtt"] = time.time()
