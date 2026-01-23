@@ -135,7 +135,7 @@ def compute_correction(measured_lat, measured_lon, known_lat, known_lon):
 # -----------------------------
 # GPS Thread
 # -----------------------------
-def gps_thread():
+def gps_thread(heartbeats=None): # Add 'heartbeats=None' here
     lat_buf, lon_buf = [], []
     k_lat = Kalman1D()
     k_lon = Kalman1D()
@@ -160,6 +160,8 @@ def gps_thread():
         return sum(buf) / len(buf)
 
     while True:
+        if heartbeats:
+            heartbeats["gps"] = time.time() # This feeds the Watchdog
         if gps_uart.any():
             try:
                 c = gps_uart.read(1)
