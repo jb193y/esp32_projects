@@ -73,6 +73,26 @@ def ensure_network_ready():
     return True
 
 # -----------------------------
+# MQTT Helper Functions
+# ----------------------------
+def publish_status(client, status="",reason="OTA Update"):
+    """Sends a final message before the hardware resets."""
+    try:
+        cfg = config.load_config()
+        device_id = cfg.get("device", {}).get("id", "unknown")
+        topic = f"device/{device_id}/status"
+        payload = ujson.dumps({
+            "status": status,
+            "reason": reason,
+            "timestamp": time.time()
+        })
+        client.publish(topic, payload)
+        print(f"📤 Reboot notification sent: {reason}")
+        time.sleep(1) # Give the network a moment to flush the buffer
+    except:
+        pass # Don't block the reboot if MQTT fails
+
+# -----------------------------
 # Command Execution Logic
 # -----------------------------
 def handle_command(cmd):
@@ -117,6 +137,8 @@ def run_ota_safely(client, cmd):
     try:
         # 1. Inform dashboard that we are STARTING (Optional)
         # client.publish(topic, "OTA_START") 
+        if client:
+            publish_status(client, "updating", "OTA Update Starting")
 
         if cmd.get("manifest") is True:
             m_name = cmd.get("manifest_name") or ota_cfg.get("manifest", "manifest.json")
@@ -131,7 +153,7 @@ def run_ota_safely(client, cmd):
 
         # 2. SUCCESS! Now we notify and reboot
         if success and client:
-            publish_reboot_message(client, "OTA Success - Rebooting")
+            publish_status(client, "rebooting", "OTA Success - Rebooting")
             time.sleep(1) # Ensure MQTT packet leaves the buffer
             machine.reset()
 
@@ -160,26 +182,6 @@ def mqtt_callback(topic, msg):
         _pending_ota_cmd = payload
     else:
         handle_command(payload)
-
-# -----------------------------
-# MQTT Helper Functions
-# ----------------------------
-def publish_reboot_message(client, reason="OTA Update"):
-    """Sends a final message before the hardware resets."""
-    try:
-        cfg = config.load_config()
-        device_id = cfg.get("device", {}).get("id", "unknown")
-        topic = f"device/{device_id}/status"
-        payload = ujson.dumps({
-            "status": "rebooting",
-            "reason": reason,
-            "timestamp": time.time()
-        })
-        client.publish(topic, payload)
-        print(f"📤 Reboot notification sent: {reason}")
-        time.sleep(1) # Give the network a moment to flush the buffer
-    except:
-        pass # Don't block the reboot if MQTT fails
 
 # -----------------------------
 # Main Thread Loop
