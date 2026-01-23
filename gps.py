@@ -249,6 +249,7 @@ def gps_thread(heartbeats=None): # Add 'heartbeats=None' here
                 gps_data["confidence_m"] = confidence_m
                 gps_data["locked"] = locked
             finally:
+                print("GPS:", gps_data)
                 lock.release()
 
         time.sleep(0.02)
