@@ -204,16 +204,19 @@ def mqtt_thread(heartbeats=None):
     pub_topic = "device/%s/location" % client_id
     cmd_topic = "device/%s/command" % client_id
     base_corr_topic = "base/%s/correction" % client_id
+    nmea_topic = "device/%s/nmea" % client_id
     
     rover_base_id = device.get("base_id")
     rover_corr_topic = "base/%s/correction" % rover_base_id if rover_base_id else None
     
     PUBLISH_EVERY_SEC = int(mqtt_cfg.get("publish_every_sec", 10))
+    NMEA_PUBLISH_EVERY_SEC = int(mqtt_cfg.get("nmea_publish_every_sec", 5))
     MOVE_THRESHOLD_M = float(mqtt_cfg.get("move_threshold_m", 5.0))
     CORR_TIMEOUT_S = int(mqtt_cfg.get("correction_timeout_s", 5))
     CORR_MAX_M = float(mqtt_cfg.get("correction_max_m", 5.0))
 
     last_pub_time = 0
+    last_nmea_pub_time = 0
     last_pub_lat, last_pub_lon = None, None
 
     while True:
@@ -248,6 +251,23 @@ def mqtt_thread(heartbeats=None):
                     _pending_ota_cmd = None
 
                 now = time.time()
+                
+                # Publish NMEA/raw GPS data every N seconds
+                if now - last_nmea_pub_time >= NMEA_PUBLISH_EVERY_SEC:
+                    gps.lock.acquire()
+                    try:
+                        raw_data = dict(gps.gps_raw_data)
+                    finally:
+                        gps.lock.release()
+                    
+                    if raw_data.get("nmea_sentences"):
+                        nmea_payload = {
+                            "client_id": client_id,
+                            "timestamp": raw_data.get("timestamp"),
+                            "nmea_sentences": raw_data.get("nmea_sentences", [])
+                        }
+                        client.publish(nmea_topic, ujson.dumps(nmea_payload))
+                        last_nmea_pub_time = now
                 
                 # Fetch current GPS data
                 gps.lock.acquire()

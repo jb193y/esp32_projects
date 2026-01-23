@@ -58,6 +58,10 @@ gps_data = {
     "confidence_m": None,
     "locked": False,
 }
+gps_raw_data = {
+    "timestamp": None,
+    "nmea_sentences": [],
+}
 lock = _thread.allocate_lock()
 
 # -----------------------------
@@ -166,7 +170,20 @@ def gps_thread(heartbeats=None): # Add 'heartbeats=None' here
             try:
                 c = gps_uart.read(1)
                 if c:
-                    gps.update(c.decode("utf-8", "ignore"))
+                    char = c.decode("utf-8", "ignore")
+                    gps.update(char)
+                    # Capture NMEA sentences
+                    if char == '\n':
+                        if hasattr(gps, 'nmea_sentence') and gps.nmea_sentence:
+                            lock.acquire()
+                            try:
+                                gps_raw_data["nmea_sentences"].append(gps.nmea_sentence)
+                                # Keep only last 20 sentences
+                                if len(gps_raw_data["nmea_sentences"]) > 20:
+                                    gps_raw_data["nmea_sentences"].pop(0)
+                                gps_raw_data["timestamp"] = iso_timestamp()
+                            finally:
+                                lock.release()
             except:
                 pass
 
