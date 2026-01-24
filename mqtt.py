@@ -83,8 +83,8 @@ def publish_status(client, status="",reason="OTA Update"):
         client_type = cfg.get("client", {}).get("type", "rover")
         topic = f"{client_type}/{client_id}/status"
         payload = ujson.dumps({
-            "client_id": client_id,
             "client_type": client_type,
+            "client_id": client_id,
             "status": status,
             "reason": reason,
             "timestamp": time.time()
