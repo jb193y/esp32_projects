@@ -79,9 +79,12 @@ def publish_status(client, status="",reason="OTA Update"):
     """Sends a final message before the hardware resets."""
     try:
         cfg = config.load_config()
-        device_id = cfg.get("device", {}).get("id", "unknown")
-        topic = f"device/{device_id}/status"
+        client_id = cfg.get("client", {}).get("id", "unknown")
+        client_type = cfg.get("client", {}).get("type", "rover")
+        topic = f"client/{client_id}/status"
         payload = ujson.dumps({
+            "client_id": client_id,
+            "client_type": client_type,
             "status": status,
             "reason": reason,
             "timestamp": time.time()
@@ -105,10 +108,10 @@ def handle_command(cmd):
     if command == "REBOOT":
         machine.reset()
     elif command == "SET_MODE":
-        cfg.setdefault("device", {})["mode"] = cmd.get("mode")
+        cfg.setdefault("client", {})["mode"] = cmd.get("mode")
         changed = True
-    elif command == "SET_DEVICE_TYPE":
-        cfg.setdefault("device", {})["type"] = cmd.get("type")
+    elif command == "SET_CLIENT_TYPE":
+        cfg.setdefault("client", {})["type"] = cmd.get("type")
         changed = True
     elif command == "SET_BASE":
         cfg.setdefault("base", {})["known_lat"] = float(cmd.get("known_lat"))
@@ -193,21 +196,21 @@ def mqtt_thread(heartbeats=None):
     _thread.stack_size(8192)
     
     cfg = config.load_config()
-    device = cfg.get("device", {})
+    client_cfg = cfg.get("client", {})
     mqtt_cfg = cfg.get("mqtt", {})
     
-    client_id = device.get("id", "esp32_gps")
-    device_type = device.get("type", "rover")
+    client_id = client_cfg.get("id", "esp32_gps")
+    client_type = client_cfg.get("type", "rover")
     server = mqtt_cfg.get("server", "10.10.10.211")
     port = int(mqtt_cfg.get("port", 1883))
     
-    pub_topic = "device/%s/location" % client_id
-    cmd_topic = "device/%s/command" % client_id
-    base_corr_topic = "base/%s/correction" % client_id
-    nmea_topic = "device/%s/nmea" % client_id
+    pub_topic = f"client/{client_id}/location"
+    cmd_topic = f"client/{client_id}/command"
+    base_corr_topic = f"client/{client_id}/correction"
+    nmea_topic = f"client/{client_id}/nmea"
     
-    rover_base_id = device.get("base_id")
-    rover_corr_topic = "base/%s/correction" % rover_base_id if rover_base_id else None
+    rover_base_id = client_cfg.get("base_id")
+    rover_corr_topic = f"client/{rover_base_id}/correction" if rover_base_id else None
     
     PUBLISH_EVERY_SEC = int(mqtt_cfg.get("publish_every_sec", 10))
     NMEA_PUBLISH_EVERY_SEC = int(mqtt_cfg.get("nmea_publish_every_sec", 5))
@@ -232,7 +235,7 @@ def mqtt_thread(heartbeats=None):
         try:
             client.connect()
             client.subscribe(cmd_topic)
-            if device_type == "rover" and rover_corr_topic:
+            if client_type == "rover" and rover_corr_topic:
                 client.subscribe(rover_corr_topic)
             
             print("✅ MQTT Connected to %s" % server)
@@ -268,6 +271,7 @@ def mqtt_thread(heartbeats=None):
                     if raw_data.get("nmea_sentences"):
                         nmea_payload = {
                             "client_id": client_id,
+                            "client_type": client_type,
                             "timestamp": raw_data.get("timestamp"),
                             "nmea_sentences": raw_data.get("nmea_sentences", [])
                         }
@@ -288,12 +292,14 @@ def mqtt_thread(heartbeats=None):
                     continue
 
                 # --- BASE STATION LOGIC ---
-                if device_type == "base":
+                if client_type == "base":
                     known_lat = cfg.get("base", {}).get("known_lat")
                     known_lon = cfg.get("base", {}).get("known_lon")
                     if known_lat is not None and (now - last_pub_time >= 1):
                         corr_payload = {
-                            "base_id": client_id, "timestamp": ts,
+                            "client_id": client_id,
+                            "client_type": client_type,
+                            "timestamp": ts,
                             "delta_lat": known_lat - lat, "delta_lon": known_lon - lon,
                             "hdop": data.get("hdop")
                         }
@@ -324,7 +330,9 @@ def mqtt_thread(heartbeats=None):
                             corrected = True
 
                         payload = {
-                            "client_id": client_id, "timestamp": ts, "latitude": lat, "longitude": lon,
+                            "client_id": client_id,
+                            "client_type": client_type,
+                            "timestamp": ts, "latitude": lat, "longitude": lon,
                             "hdop": data.get("hdop"), "sats": data.get("sats"), "locked": data.get("locked"),
                             "corrected": corrected
                         }

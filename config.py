@@ -89,7 +89,7 @@ def save_config(cfg):
 def update_config(data):
     """
     Shallow update at top-level groups only:
-      device/wifi/mqtt/gps/app/time/ota/server/imu
+      client/wifi/mqtt/gps/app/time/ota/server/imu
     Values should be dicts.
     """
     cfg = load_config()

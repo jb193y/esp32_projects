@@ -7,7 +7,7 @@ import time
 import machine
 import _thread
 
-ALLOWED_SECTIONS = {"wifi", "mqtt", "gps", "device", "time", "ota", "server", "imu", "base"}
+ALLOWED_SECTIONS = {"wifi", "mqtt", "gps", "client", "time", "ota", "server", "imu", "base"}
 
 def reboot_response(msg):
     _start_delayed_reset()
@@ -73,7 +73,7 @@ def handle_status():
 
     return {
         "status": "ok",
-        "device": cfg.get("device"),
+        "client": cfg.get("client"),
         "base": cfg.get("base"),
         "wifi": cfg.get("wifi"),
         "mqtt": cfg.get("mqtt"),
@@ -106,30 +106,30 @@ def handle_update(request):
     if not patch:
         return {"status": "error", "message": "No valid config sections provided"}
 
-    # Validate: base.* only if resulting device.type == "base"
+    # Validate: base.* only if resulting client.type == "base"
     current = config.load_config()
-    current_device = current.get("device", {})
-    new_device = dict(current_device)
-    if "device" in patch:
-        new_device.update(patch["device"])
+    current_client = current.get("client", {})
+    new_client = dict(current_client)
+    if "client" in patch:
+        new_client.update(patch["client"])
 
-    new_type = new_device.get("type", "rover")
+    new_type = new_client.get("type", "rover")
 
     if "base" in patch and new_type != "base":
-        return {"status": "error", "message": "base.* is only allowed when device.type == 'base'"}
+        return {"status": "error", "message": "base.* is only allowed when client.type == 'base'"}
 
     if new_type == "base":
         # ensure known_lat/lon exist either already or in patch
         base_now = dict(current.get("base", {}))
         base_now.update(patch.get("base", {}))
         if base_now.get("known_lat") is None or base_now.get("known_lon") is None:
-            return {"status": "error", "message": "device.type='base' requires base.known_lat and base.known_lon"}
+            return {"status": "error", "message": "client.type='base' requires base.known_lat and base.known_lon"}
 
     # Apply update
     cfg = config.update_config(patch)
 
     # Force STA mode after provisioning
-    cfg.setdefault("device", {})["mode"] = "sta"
+    cfg.setdefault("client", {})["mode"] = "sta"
     config.save_config(cfg)
 
     return reboot_response("Config updated. Rebooting...")

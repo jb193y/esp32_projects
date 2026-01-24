@@ -32,19 +32,19 @@ print("🚀 main.py started")
 
 # Load configuration
 cfg = config.load_config()
-device_cfg = cfg.get("device", {})
-mode = device_cfg.get("mode", "ap")
-device_type = device_cfg.get("type", "rover")
+client_cfg = cfg.get("client", {})
+mode = client_cfg.get("mode", "ap")
+client_type = client_cfg.get("type", "rover")
 
 if mode != "sta":
     print("📡 AP mode active — waiting for configuration.")
     while True:
         time.sleep(10)
 
-print(f"✅ STA mode: {device_type.upper()} initialization")
+print(f"✅ STA mode: {client_type.upper()} initialization")
 
 # 1. Selective Hardware Init
-if device_type == "rover":
+if client_type == "rover":
     print("🧭 Initializing IMU for Rover mode...")
     imu_present = imu.init_imu()
     if not imu_present:

@@ -12,10 +12,10 @@ from imu import is_moving, imu_accel_vector  # kept as in your current file
 # -----------------------------
 cfg = config.load_config()
 
-device_cfg = cfg.get("device", {})
+client_cfg = cfg.get("client", {})
 gps_cfg = cfg.get("gps", {})
 
-DEVICE_TYPE = device_cfg.get("type", "rover")  # "rover" or "base"
+CLIENT_TYPE = client_cfg.get("type", "rover")  # "rover" or "base"
 
 # base-only (validated/used only when base)
 base_cfg = cfg.get("base", {})
@@ -154,7 +154,7 @@ def gps_thread(heartbeats=None): # Add 'heartbeats=None' here
     nmea_buffer = ""
 
     # Validation (base must have known coords)
-    if DEVICE_TYPE == "base":
+    if CLIENT_TYPE == "base":
         if KNOWN_LAT is None or KNOWN_LON is None:
             print("⚠️ BASE mode but base.known_lat/known_lon missing — corrections will not work.")
 

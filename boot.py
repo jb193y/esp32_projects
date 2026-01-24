@@ -15,7 +15,7 @@ cfg = config.load_config()
 time_restored = config.restore_time(cfg)
 
 # 2) Start Wi-Fi in selected mode
-mode = cfg.get("device", {}).get("mode", "ap")
+mode = cfg.get("client", {}).get("mode", "ap")
 
 if mode == "sta":
     print("STA mode selected")
