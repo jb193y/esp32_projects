@@ -1,9 +1,9 @@
 {
   "device": {
-    "id": "esp32_base_01",
-    "type": "base",
+    "id": "esp32_gps_01",
+    "type": "rover",
     "mode": "sta",
-    "base_id": "base_01"
+    "base_id": "esp32_base_01"
   },
   "base": {
     "known_lat": 33.106,
