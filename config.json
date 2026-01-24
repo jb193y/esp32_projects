@@ -1,6 +1,6 @@
 {
   "device": {
-    "id": "esp32_gps_01",
+    "id": "esp32_base_01",
     "type": "base",
     "mode": "sta",
     "base_id": "base_01"
