@@ -211,6 +211,7 @@ def mqtt_thread(heartbeats=None):
     
     PUBLISH_EVERY_SEC = int(mqtt_cfg.get("publish_every_sec", 10))
     NMEA_PUBLISH_EVERY_SEC = int(mqtt_cfg.get("nmea_publish_every_sec", 5))
+    PUBLISH_EVERY_SEC_NO_CORR = int(mqtt_cfg.get("publish_every_sec_no_corr", 30))  # Stricter interval without corrections
     MOVE_THRESHOLD_M = float(mqtt_cfg.get("move_threshold_m", 5.0))
     CORR_TIMEOUT_S = int(mqtt_cfg.get("correction_timeout_s", 5))
     CORR_MAX_M = float(mqtt_cfg.get("correction_max_m", 5.0))
@@ -218,6 +219,7 @@ def mqtt_thread(heartbeats=None):
     last_pub_time = 0
     last_nmea_pub_time = 0
     last_pub_lat, last_pub_lon = None, None
+    last_corrected = False
 
     while True:
         if not ensure_network_ready():
@@ -297,16 +299,21 @@ def mqtt_thread(heartbeats=None):
 
                 # --- ROVER LOGIC ---
                 else:
-                    should_pub = (now - last_pub_time >= PUBLISH_EVERY_SEC)
+                    corr, corr_recv = _get_correction()
+                    has_valid_corr = corr and (now - corr_recv <= CORR_TIMEOUT_S)
+                    
+                    # Use stricter publish interval if no valid corrections
+                    pub_interval = PUBLISH_EVERY_SEC if has_valid_corr else PUBLISH_EVERY_SEC_NO_CORR
+                    
+                    should_pub = (now - last_pub_time >= pub_interval)
                     if not should_pub and last_pub_lat:
                         if haversine_m(last_pub_lat, last_pub_lon, lat, lon) >= MOVE_THRESHOLD_M:
                             should_pub = True
 
                     if should_pub:
                         corrected = False
-                        corr, corr_recv = _get_correction()
                         # Apply DGPS correction if fresh enough
-                        if corr and (now - corr_recv <= CORR_TIMEOUT_S):
+                        if has_valid_corr:
                             dlat = _clamp(float(corr.get("delta_lat", 0)), -_meters_to_deg_lat(CORR_MAX_M), _meters_to_deg_lat(CORR_MAX_M))
                             dlon = _clamp(float(corr.get("delta_lon", 0)), -_meters_to_deg_lon(CORR_MAX_M, lat), _meters_to_deg_lon(CORR_MAX_M, lat))
                             lat += dlat
