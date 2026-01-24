@@ -169,7 +169,7 @@ def gps_thread(heartbeats=None): # Add 'heartbeats=None' here
     while True:
         if heartbeats:
             heartbeats["gps"] = time.time() # This feeds the Watchdog
-        if gps_uart.any():
+        while gps_uart.any():
             try:
                 c = gps_uart.read(1)
                 if c:
