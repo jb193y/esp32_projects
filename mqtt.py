@@ -90,7 +90,6 @@ def publish_status(client, status="",reason="OTA Update"):
             "timestamp": time.time()
         })
         client.publish(topic, payload)
-        print(f"📤 Reboot notification sent: {reason}")
         time.sleep(1) # Give the network a moment to flush the buffer
     except:
         pass # Don't block the reboot if MQTT fails
