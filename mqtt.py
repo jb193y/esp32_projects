@@ -262,14 +262,18 @@ def mqtt_thread(heartbeats=None):
                     finally:
                         gps.lock.release()
                     
-                    if raw_data.get("nmea_sentences"):
+                    nmea_sentences = raw_data.get("nmea_sentences", [])
+                    if nmea_sentences:
                         nmea_payload = {
                             "client_id": client_id,
                             "timestamp": raw_data.get("timestamp"),
-                            "nmea_sentences": raw_data.get("nmea_sentences", [])
+                            "nmea_sentences": nmea_sentences
                         }
                         client.publish(nmea_topic, ujson.dumps(nmea_payload))
+                        print("📡 NMEA Published: %d sentences" % len(nmea_sentences))
                         last_nmea_pub_time = now
+                    else:
+                        print("⚠️ NMEA: No sentences captured yet")
                 
                 # Fetch current GPS data
                 gps.lock.acquire()

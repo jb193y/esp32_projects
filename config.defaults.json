@@ -1,9 +1,9 @@
 {
   "device": {
     "id": "esp32_gps_01",
-    "type": "base",
+    "type": "rover",
     "mode": "sta",
-    "base_id": "base_01"
+    "base_id": "esp32_base_01"
   },
   "base": {
     "known_lat": 33.106,
@@ -34,9 +34,9 @@
     "server": "10.10.10.211",
     "port": 1883,
     "publish_every_sec": 10,
-    "publish_every_sec_no_corr": 30,
+    "publish_every_sec_no_corr": 20,
     "nmea_publish_every_sec": 5,
-    "move_threshold_m": 5.0,
+    "move_threshold_m": 8.0,
     "max_retries": 5,
     "retry_delay": 5
   },

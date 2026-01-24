@@ -149,6 +149,9 @@ def gps_thread(heartbeats=None): # Add 'heartbeats=None' here
     locked_pos = {"lat": None, "lon": None}
 
     last_fix_process = time.time()
+    
+    # NMEA sentence capture
+    nmea_buffer = ""
 
     # Validation (base must have known coords)
     if DEVICE_TYPE == "base":
@@ -172,18 +175,23 @@ def gps_thread(heartbeats=None): # Add 'heartbeats=None' here
                 if c:
                     char = c.decode("utf-8", "ignore")
                     gps.update(char)
-                    # Capture NMEA sentences
-                    if char == '\n':
-                        if hasattr(gps, 'nmea_sentence') and gps.nmea_sentence:
+                    # Capture raw NMEA sentence
+                    if char == '\r':
+                        continue
+                    elif char == '\n':
+                        if nmea_buffer and nmea_buffer.startswith('$'):
                             lock.acquire()
                             try:
-                                gps_raw_data["nmea_sentences"].append(gps.nmea_sentence)
+                                gps_raw_data["nmea_sentences"].append(nmea_buffer)
                                 # Keep only last 20 sentences
                                 if len(gps_raw_data["nmea_sentences"]) > 20:
                                     gps_raw_data["nmea_sentences"].pop(0)
                                 gps_raw_data["timestamp"] = iso_timestamp()
                             finally:
                                 lock.release()
+                        nmea_buffer = ""
+                    else:
+                        nmea_buffer += char
             except:
                 pass
 
