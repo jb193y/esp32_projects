@@ -81,7 +81,7 @@ def publish_status(client, status="",reason="OTA Update"):
         cfg = config.load_config()
         client_id = cfg.get("client", {}).get("id", "unknown")
         client_type = cfg.get("client", {}).get("type", "rover")
-        topic = f"client/{client_id}/status"
+        topic = f"{client_type}/{client_id}/status"
         payload = ujson.dumps({
             "client_id": client_id,
             "client_type": client_type,
@@ -204,13 +204,13 @@ def mqtt_thread(heartbeats=None):
     server = mqtt_cfg.get("server", "10.10.10.211")
     port = int(mqtt_cfg.get("port", 1883))
     
-    pub_topic = f"client/{client_id}/location"
-    cmd_topic = f"client/{client_id}/command"
-    base_corr_topic = f"client/{client_id}/correction"
-    nmea_topic = f"client/{client_id}/nmea"
+    pub_topic = f"{client_type}/{client_id}/location"
+    cmd_topic = f"{client_type}/{client_id}/command"
+    base_corr_topic = f"{client_type}/{client_id}/correction"
+    nmea_topic = f"{client_type}/{client_id}/nmea"
     
     rover_base_id = client_cfg.get("base_id")
-    rover_corr_topic = f"client/{rover_base_id}/correction" if rover_base_id else None
+    rover_corr_topic = f"base/{rover_base_id}/correction" if rover_base_id else None
     
     PUBLISH_EVERY_SEC = int(mqtt_cfg.get("publish_every_sec", 10))
     NMEA_PUBLISH_EVERY_SEC = int(mqtt_cfg.get("nmea_publish_every_sec", 5))
