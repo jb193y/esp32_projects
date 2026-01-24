@@ -3,6 +3,7 @@ import _thread
 import machine
 import time
 import math
+import struct
 from lib.micropyGPS import MicropyGPS
 import config
 from imu import is_moving, imu_accel_vector  # kept as in your current file
@@ -137,6 +138,81 @@ def compute_correction(measured_lat, measured_lon, known_lat, known_lon):
     }
 
 # -----------------------------
+# UBX Configuration Helpers
+# -----------------------------
+def calc_checksum(payload):
+    ck_a, ck_b = 0, 0
+    for b in payload:
+        ck_a = (ck_a + b) & 0xFF
+        ck_b = (ck_b + ck_a) & 0xFF
+    return ck_a, ck_b
+
+def send_ubx(cls, msg_id, payload):
+    """Sends a UBX message to the GPS module."""
+    # Frame: [Sync1][Sync2][Class][ID][Len][Payload][CK_A][CK_B]
+    length = len(payload)
+    content = struct.pack("<BBH", cls, msg_id, length) + payload
+    ck_a, ck_b = calc_checksum(content)
+    packet = b"\xB5\x62" + content + struct.pack("BB", ck_a, ck_b)
+    gps_uart.write(packet)
+
+def configure_gps_module():
+    print("⚙️ Configuring GPS Module (UBX)...")
+    
+    # 1. Dynamic Model & Min Elevation (CFG-NAV5)
+    # -------------------------------------------
+    # Determine Model
+    model_cfg = gps_cfg.get("dynamic_model", "").lower()
+    if "stationary" in model_cfg:
+        dyn_model = 2
+    elif "automotive" in model_cfg:
+        dyn_model = 4
+    elif "pedestrian" in model_cfg:
+        dyn_model = 3
+    else:
+        # Default based on Client Type
+        dyn_model = 2 if CLIENT_TYPE == "base" else 3 # Pedestrian for rover default
+    
+    min_elev = int(gps_cfg.get("min_elevation", 15))
+    
+    print(f"   - Dynamic Model: {dyn_model} (2=Stat, 3=Ped, 4=Auto)")
+    print(f"   - Min Elevation: {min_elev}°")
+
+    # Payload for CFG-NAV5 (36 bytes)
+    # Mask: 0x0003 (Apply DynModel and MinEl settings)
+    payload = struct.pack("<HBBiiBbHHHHBBBBHHB5s", 
+        0x0003,      # mask
+        dyn_model,   # dynModel
+        3,           # fixMode (3 = Auto 2D/3D)
+        0,           # fixedAlt
+        10000,       # fixedAltVar
+        min_elev,    # minElev
+        0,           # drLimit
+        500, 500,    # pDop, tDop
+        100, 100,    # pAcc, tAcc
+        0, 60,       # staticHoldThresh, dgpsTimeOut
+        0, 0,        # cno
+        0, 0, 0,     # reserved, staticHoldMaxDist, utcStandard
+        b'\x00'*5    # reserved
+    )
+    send_ubx(0x06, 0x24, payload)
+    time.sleep(0.1)
+
+    # 2. Update Rate (CFG-RATE)
+    # -------------------------
+    rate_hz = int(gps_cfg.get("update_rate_hz", 1))
+    if rate_hz > 5: rate_hz = 5 # Limit to 5Hz for stability
+    if rate_hz < 1: rate_hz = 1
+    
+    meas_rate = 1000 // rate_hz
+    print(f"   - Update Rate: {rate_hz}Hz ({meas_rate}ms)")
+    
+    # measRate(2), navRate(2), timeRef(2)
+    payload = struct.pack("<HHH", meas_rate, 1, 1) # 1 = GPS Time
+    send_ubx(0x06, 0x08, payload)
+    time.sleep(0.1)
+
+# -----------------------------
 # GPS Thread
 # -----------------------------
 def gps_thread(heartbeats=None): # Add 'heartbeats=None' here
@@ -159,6 +235,7 @@ def gps_thread(heartbeats=None): # Add 'heartbeats=None' here
             print("⚠️ BASE mode but base.known_lat/known_lon missing — corrections will not work.")
 
     print("✅ GPS thread started")
+    configure_gps_module()
 
     def smooth(buf, v):
         buf.append(v)
