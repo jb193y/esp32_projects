@@ -1,7 +1,7 @@
 {
   "client": {
-    "id": "esp32_base_01",
-    "type": "base",
+    "id": "esp32_rover_01",
+    "type": "rover",
     "mode": "sta",
     "base_id": "esp32_base_01"
   },
@@ -37,7 +37,7 @@
     "publish_every_sec_no_corr": 10,
     "nmea_publish_every_sec": 5,
     "nmea_publish_flag": false,
-    "move_threshold_m": 5.0,
+    "move_threshold_m": 8.0,
     "max_retries": 5,
     "retry_delay": 5
   },

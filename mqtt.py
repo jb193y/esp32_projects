@@ -299,7 +299,7 @@ def mqtt_thread(heartbeats=None):
                 if client_type == "base":
                     known_lat = cfg.get("base", {}).get("known_lat")
                     known_lon = cfg.get("base", {}).get("known_lon")
-                    if known_lat is not None and (now - last_pub_time >= 1):
+                    if known_lat is not None and (now - last_pub_time >= PUBLISH_EVERY_SEC):
                         corr_payload = {
                             "client_id": client_id,
                             "client_type": client_type,
