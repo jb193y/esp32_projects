@@ -6,8 +6,8 @@
     "base_id": "esp32_base_01"
   },
   "base": {
-    "known_lat": 33.1060506618616,
-    "known_lon": -96.633054877543
+    "known_lat": 33.10597762366573, 
+    "known_lon": -96.63314919533131
   },
   "wifi": {
     "networks": [
@@ -36,6 +36,7 @@
     "publish_every_sec": 10,
     "publish_every_sec_no_corr": 10,
     "nmea_publish_every_sec": 5,
+    "nmea_publish_flag": false,
     "move_threshold_m": 5.0,
     "max_retries": 5,
     "retry_delay": 5

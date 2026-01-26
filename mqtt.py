@@ -177,7 +177,7 @@ def mqtt_callback(topic, msg):
     except: return
 
     # Correction data (rover)
-    if "/correction" in t or t.startswith("base/"):
+    if "/correction" in t:
         _set_correction(payload)
         return
 
@@ -216,6 +216,7 @@ def mqtt_thread(heartbeats=None):
     
     PUBLISH_EVERY_SEC = int(mqtt_cfg.get("publish_every_sec", 10))
     NMEA_PUBLISH_EVERY_SEC = int(mqtt_cfg.get("nmea_publish_every_sec", 5))
+    NMEA_PUBLISH_FLAG = bool(mqtt_cfg.get("nmea_publish_flag", False))
     PUBLISH_EVERY_SEC_NO_CORR = int(mqtt_cfg.get("publish_every_sec_no_corr", 30))  # Stricter interval without corrections
     MOVE_THRESHOLD_M = float(mqtt_cfg.get("move_threshold_m", 5.0))
     CORR_TIMEOUT_S = int(mqtt_cfg.get("correction_timeout_s", 5))
@@ -261,7 +262,7 @@ def mqtt_thread(heartbeats=None):
                 now = time.time()
                 
                 # Publish NMEA/raw GPS data every N seconds
-                if now - last_nmea_pub_time >= NMEA_PUBLISH_EVERY_SEC:
+                if now - last_nmea_pub_time >= NMEA_PUBLISH_EVERY_SEC and NMEA_PUBLISH_FLAG:
                     gps.lock.acquire()
                     try:
                         raw_data = {
