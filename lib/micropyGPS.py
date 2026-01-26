@@ -43,9 +43,9 @@ class MicropyGPS(object):
         Setup GPS Object Status Flags, Internal Data Registers, etc
             local_offset (int): Timzone Difference to UTC
             location_formatting (str): Style For Presenting Longitude/Latitude:
-                                       Decimal Degree Minute (ddm) - 40° 26.767′ N
-                                       Degrees Minutes Seconds (dms) - 40° 26′ 46″ N
-                                       Decimal Degrees (dd) - 40.446° N
+                                       Decimal Degree Minute (ddm) - 40 26.767 N
+                                       Degrees Minutes Seconds (dms) - 40 26 46 N
+                                       Decimal Degrees (dd) - 40.446 N
         """
 
         #####################
@@ -756,7 +756,7 @@ class MicropyGPS(object):
     def date_string(self, formatting='s_mdy', century='20'):
         """
         Creates a readable string of the current date.
-        Can select between long format: Januray 1st, 2014
+        Can select between long format: January 1st, 2014
         or two short formats:
         11/01/2014 (MM/DD/YYYY)
         01/11/2014 (DD/MM/YYYY)
@@ -765,7 +765,7 @@ class MicropyGPS(object):
         :return: date_string  string with long or short format date
         """
 
-        # Long Format Januray 1st, 2014
+        # Long Format January 1st, 2014
         if formatting == 'long':
             # Retrieve Month string from private set
             month = self.__MONTHS[self.date[1] - 1]
