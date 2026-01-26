@@ -5,6 +5,7 @@ import json
 OUTPUT_FILENAME = "code.txt"
 SENSITIVE_KEYS = {"password", "ap_password", "secret", "token", "api_key"}
 IGNORE_DIRS = {".git", ".vscode", "__pycache__", "venv", "env", ".idea"}
+IGNORE_FILES = {'pack_code.py', 'unpack_code.py', OUTPUT_FILENAME}
 
 def redact_data(data):
     """Recursively redact sensitive keys in a dictionary or list."""
@@ -33,8 +34,8 @@ def process_files():
             
             for file in files:
                 if file.endswith((".py", ".json")):
-                    # Skip this script and the output file itself
-                    if file == os.path.basename(__file__) or file == OUTPUT_FILENAME:
+                    # Skip ignored files
+                    if file in IGNORE_FILES:
                         continue
 
                     full_path = os.path.join(root, file)

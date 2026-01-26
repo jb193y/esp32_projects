@@ -2,6 +2,7 @@ import os
 import re
 
 INPUT_FILENAME = "code.txt"
+IGNORE_FILES = {'pack_code.py', 'unpack_code.py'}
 
 def unpack_files():
     if not os.path.exists(INPUT_FILENAME):
@@ -25,6 +26,10 @@ def unpack_files():
     for i in range(1, len(parts), 2):
         header_path = parts[i].strip()
         file_content = parts[i+1]
+        
+        if os.path.basename(header_path) in IGNORE_FILES:
+            print(f"⏭️  Skipping ignored file: {header_path}")
+            continue
         
         # Only process .py files to avoid overwriting configs with redacted JSON
         if not header_path.endswith(".py"):
