@@ -10,6 +10,7 @@ from umqtt.simple import MQTTClient
 
 import config
 import gps
+import led_status
 from ota import ota_update, fetch_manifest
 
 # --- Global Control Flags (To prevent stack overflow) ---
@@ -137,6 +138,7 @@ def run_ota_safely(client, cmd):
         return
 
     try:
+        led_status.set_status("OTA_UPDATE")
         # 1. Inform dashboard that we are STARTING (Optional)
         # client.publish(topic, "OTA_START") 
         if client:
@@ -161,6 +163,7 @@ def run_ota_safely(client, cmd):
 
     except Exception as e:
         print("❌ OTA Failed:", e)
+        led_status.set_status("MQTT_CONNECTED") # Revert LED on failure
         # Optional: Notify dashboard of failure
 
 # -----------------------------
@@ -238,6 +241,7 @@ def mqtt_thread(heartbeats=None):
                 client.subscribe(rover_corr_topic)
             
             print("✅ MQTT Connected to %s" % server)
+            led_status.set_status("MQTT_CONNECTED")
 
             if client:
                 publish_status(client, "online", "System is online")
@@ -342,6 +346,7 @@ def mqtt_thread(heartbeats=None):
 
         except Exception as e:
             print("⚠️ MQTT Error:", e)
+            led_status.set_status("WIFI_CONNECTED") # Revert to Wi-Fi status on disconnect
             try: client.disconnect()
             except: pass
             time.sleep(5)

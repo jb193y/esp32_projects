@@ -6,6 +6,7 @@ import config
 import gps
 import mqtt
 import imu
+import led_status
 
 # --- Thread Monitoring Heartbeats ---
 heartbeats = {
@@ -29,6 +30,9 @@ def monitor_threads():
             machine.reset()
 
 print("🚀 main.py started")
+
+# 0. Start LED thread for status indication
+_thread.start_new_thread(led_status.led_thread, ())
 
 # Load configuration
 cfg = config.load_config()
