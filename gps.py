@@ -341,6 +341,7 @@ def gps_thread(heartbeats=None): # Add 'heartbeats=None' here
 
             # Publish shared data
             lock.acquire()
+            data_to_print = None
             try:
                 gps_data["lat"] = lat
                 gps_data["lon"] = lon
@@ -350,8 +351,10 @@ def gps_thread(heartbeats=None): # Add 'heartbeats=None' here
                 gps_data["speed_kmh"] = speed_kmh
                 gps_data["confidence_m"] = confidence_m
                 gps_data["locked"] = locked
+                data_to_print = dict(gps_data)
             finally:
-                print("GPS:", gps_data)
                 lock.release()
+            if data_to_print:
+                print("GPS:", data_to_print)
 
         time.sleep(0.02)

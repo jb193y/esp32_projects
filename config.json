@@ -1,5 +1,5 @@
 {
-  "device": {
+  "client": {
     "id": "esp32_base_01",
     "type": "base",
     "mode": "sta",

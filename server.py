@@ -134,6 +134,18 @@ def handle_update(request):
 
     return reboot_response("Config updated. Rebooting...")
 
+def handle_config_post(request):
+    try:
+        # Parse the JSON body from the mobile app
+        data = ujson.loads(request.body)
+        
+        # Update Wi-Fi and MQTT groups specifically
+        if "wifi" in data or "mqtt" in data:
+            config.update_config(data)
+            return "HTTP/1.1 200 OK\r\n\r\nConfig Updated. Restarting..."
+    except Exception as e:
+        return f"HTTP/1.1 400 Bad Request\r\n\r\n{e}"
+    
 def send_json(conn, obj):
     payload = ujson.dumps(obj)
     conn.send(
