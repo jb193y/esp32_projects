@@ -232,27 +232,26 @@ def mqtt_thread(heartbeats=None):
             time.sleep(2)
             continue
 
-        client = MQTTClient(client_id, server, port)
-        client.set_callback(mqtt_callback)
-        
         try:
+            client = MQTTClient(client_id, server, port, keepalive=60)
+            client.set_callback(mqtt_callback)
             client.connect()
+            # Subscribe to command topics
             client.subscribe(cmd_topic)
-            if client_type == "rover" and rover_corr_topic:
-                client.subscribe(rover_corr_topic)
-            
-            print("✅ MQTT Connected to %s" % server)
-            led_status.set_status("MQTT_CONNECTED")
-
             if client:
                 publish_status(client, "online", "System is online")
 
+            print("✅ MQTT Connected to %s" % server)
+            led_status.set_status("MQTT_CONNECTED")
+            
+            if client_type == "rover" and rover_corr_topic:
+                client.subscribe(rover_corr_topic)
+
             while True:
-                # Update Watchdog Heartbeat
                 if heartbeats: heartbeats["mqtt"] = time.time()
-                
-                # Check for incoming messages
-                client.check_msg()
+                client.check_msg() # Non-blocking check
+                # ... publishing logic ...
+                time.sleep(0.5)
 
                 # Execute OTA if flag was set in callback
                 if _pending_ota_cmd:
@@ -346,8 +345,6 @@ def mqtt_thread(heartbeats=None):
                 time.sleep(0.1)
 
         except Exception as e:
-            print("⚠️ MQTT Error:", e)
-            led_status.set_status("WIFI_CONNECTED") # Revert to Wi-Fi status on disconnect
-            try: client.disconnect()
-            except: pass
-            time.sleep(5)
+            print(f"⚠️ MQTT Link Lost: {e}. Retrying in 5s...")
+            time.sleep(5) # Avoid rapid-fire retry loops
+

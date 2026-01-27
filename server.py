@@ -134,17 +134,28 @@ def handle_update(request):
 
     return reboot_response("Config updated. Rebooting...")
 
-def handle_config_post(request):
+# firmware/server.py refinement
+def handle_setup_post(request):
+    """
+    Endpoint: POST /api/setup
+    Payload: {"wifi_ssid": "...", "wifi_pass": "...", "mqtt_broker": "..."}
+    """
     try:
-        # Parse the JSON body from the mobile app
-        data = ujson.loads(request.body)
+        body = request.split("\r\n\r\n", 1)[1]
+        data = ujson.loads(body)
         
-        # Update Wi-Fi and MQTT groups specifically
-        if "wifi" in data or "mqtt" in data:
-            config.update_config(data)
-            return "HTTP/1.1 200 OK\r\n\r\nConfig Updated. Restarting..."
+        # Structure the configuration update
+        config_patch = {
+            "wifi": {"networks": [{"ssid": data['wifi_ssid'], "password": data['wifi_pass']}]},
+            "mqtt": {"server": data['mqtt_broker']},
+            "client": {"mode": "sta"} # Force station mode for next boot
+        }
+        
+        # Save and trigger reboot
+        config.update_config(config_patch)
+        return reboot_response("Provisioning complete. Rebooting to join home network...")
     except Exception as e:
-        return f"HTTP/1.1 400 Bad Request\r\n\r\n{e}"
+        return {"status": "error", "message": str(e)}
     
 def send_json(conn, obj):
     payload = ujson.dumps(obj)
