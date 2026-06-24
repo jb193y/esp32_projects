@@ -159,6 +159,8 @@ def mqtt_thread(heartbeats=None):
     last_state = "OFF"
 
     while True:
+        if heartbeats:
+            heartbeats["mqtt"] = time.time()
         if not ensure_network_ready():
             time.sleep(2)
             continue
@@ -232,6 +234,8 @@ def mqtt_thread(heartbeats=None):
         except Exception as e:
             print(f"⚠️ MQTT Link Lost: {e}. Retrying in 5s...")
             led_status.set_status("WIFI_CONNECTED")
+            if heartbeats:
+                heartbeats["mqtt"] = time.time()
             time.sleep(5)
 
 def utc_iso():

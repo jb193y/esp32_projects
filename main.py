@@ -6,27 +6,30 @@ import config
 import mqtt
 import pump_controller
 import led_status
+import network
 
 # --- Thread Monitoring Heartbeats ---
 heartbeats = {
-    "pump": time.time(),
-    "mqtt": time.time()
+    "pump": time.time()
 }
 
 def monitor_threads():
-    """Safety Watchdog: Reboots the system if a background thread hangs."""
+    """Safety Watchdog: Reboots the system if an active background thread hangs."""
     while True:
         time.sleep(10)
         now = time.time()
         
-        pump_age = now - heartbeats["pump"]
-        mqtt_age = now - heartbeats["mqtt"]
-        
-        if pump_age > 60 or mqtt_age > 60:
-            print("🚨 CRITICAL: Thread hang detected!")
-            print("Pump Thread Age: %ds, MQTT Thread Age: %ds" % (pump_age, mqtt_age))
-            time.sleep(1)
-            machine.reset()
+        lock_acquired = False
+        try:
+            # We check the ages of all registered heartbeats
+            for thread_name, last_time in list(heartbeats.items()):
+                age = now - last_time
+                if age > 60:
+                    print("🚨 CRITICAL: Thread hang detected on: %s! Age: %ds" % (thread_name, age))
+                    time.sleep(1)
+                    machine.reset()
+        except Exception as e:
+            print("⚠️ Watchdog scan error:", e)
 
 print("🚀 main.py started - Submersible Pump Controller")
 
@@ -38,26 +41,26 @@ cfg = config.load_config()
 client_cfg = cfg.get("client", {})
 mode = client_cfg.get("mode", "ap")
 
-if mode != "sta":
-    print("📡 AP mode active — waiting for configuration.")
-    # In AP mode, start the local setup server
-    try:
-        import server
-        server.start_server()
-    except Exception as e:
-        print("🚨 Failed to start AP server:", e)
-    while True:
-        time.sleep(10)
-
-print("✅ STA mode: Running Pump Controller initialization")
-
-# 1. Start Pump Controller Thread
+# 1. Start Pump Controller Thread (Offline protection always runs)
 _thread.start_new_thread(pump_controller.pump_thread, (heartbeats,))
 time.sleep(2)
 
-# 2. Start MQTT Communication Thread
-_thread.start_new_thread(mqtt.mqtt_thread, (heartbeats,))
+# 2. Check if Access Point is active (either AP mode or fallback)
+ap = network.WLAN(network.AP_IF)
+if ap.active() or mode == "ap":
+    print("📡 Access Point active. Starting setup portal in background...")
+    try:
+        import server
+        _thread.start_new_thread(server.start_server, ())
+    except Exception as e:
+        print("🚨 Failed to start background web server:", e)
 
-# 3. Run Watchdog
+# 3. Start MQTT Communication Thread if configured for STA mode
+if mode == "sta":
+    print("📶 STA Mode configured. Starting MQTT communication...")
+    heartbeats["mqtt"] = time.time()
+    _thread.start_new_thread(mqtt.mqtt_thread, (heartbeats,))
+
+# 4. Run Watchdog
 print("🛡️ System Monitor Active")
 monitor_threads()
