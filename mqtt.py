@@ -88,7 +88,9 @@ def handle_command(payload):
 
     if changed:
         config.save_config(cfg)
-        print("💾 Config saved.")
+        print("💾 Config saved, rebooting to apply changes...")
+        time.sleep(1)
+        machine.reset()
 
 def run_ota_safely(client, cmd):
     gc.collect()
@@ -211,7 +213,7 @@ def mqtt_thread(heartbeats=None):
                         payload = {
                             "timestamp": utc_iso(),
                             "motor_status": current_state,
-                            "mode": cfg.get("pump", {}).get("mode", "MANUAL"),
+                            "mode": tele.get("mode", "MANUAL"),
                             "voltages": [tele.get("v_a"), tele.get("v_b"), tele.get("v_c")],
                             "currents": [tele.get("i_a"), tele.get("i_b"), tele.get("i_c")],
                             "v_avg": tele.get("v_avg"),

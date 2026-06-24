@@ -187,7 +187,8 @@ def read_sensors():
             "feedback": fb_active,
             "tank_low": tank_low,
             "tank_high": tank_high,
-            "tank_level_str": "HIGH" if tank_high else "LOW" if tank_low else "MID"
+            "tank_level_str": "HIGH" if tank_high else "LOW" if tank_low else "MID",
+            "mode": pump_cfg.get("mode", "MANUAL")
         }
     finally:
         lock.release()
