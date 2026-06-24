@@ -45,6 +45,13 @@ mode = client_cfg.get("mode", "ap")
 _thread.start_new_thread(pump_controller.pump_thread, (heartbeats,))
 time.sleep(2)
 
+# 1.5. Start GPS Thread for location reporting
+print("🛰️ Starting GPS thread...")
+import gps
+heartbeats["gps"] = time.time()
+_thread.start_new_thread(gps.gps_thread, (heartbeats,))
+time.sleep(1)
+
 # 2. Check if Access Point is active (either AP mode or fallback)
 ap = network.WLAN(network.AP_IF)
 if ap.active() or mode == "ap":

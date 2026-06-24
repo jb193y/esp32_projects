@@ -10,6 +10,7 @@ from umqtt.simple import MQTTClient
 import config
 import led_status
 import pump_controller
+import gps
 from ota import ota_update, fetch_manifest
 
 # --- Global Control Flags ---
@@ -209,6 +210,12 @@ def mqtt_thread(heartbeats=None):
                     finally:
                         pump_controller.lock.release()
                     
+                    gps.lock.acquire()
+                    try:
+                        gdata = dict(gps.gps_data)
+                    finally:
+                        gps.lock.release()
+                    
                     if tele:
                         payload = {
                             "timestamp": utc_iso(),
@@ -226,7 +233,15 @@ def mqtt_thread(heartbeats=None):
                             "tank_level": tele.get("tank_level_str"),
                             "feedback": tele.get("feedback"),
                             "estop": tele.get("estop"),
-                            "active_faults": faults
+                            "active_faults": faults,
+                            "gps": {
+                                "lat": gdata.get("lat"),
+                                "lon": gdata.get("lon"),
+                                "sats": gdata.get("sats"),
+                                "locked": gdata.get("locked"),
+                                "speed_kmh": gdata.get("speed_kmh"),
+                                "confidence_m": gdata.get("confidence_m")
+                            }
                         }
                         client.publish(pub_topic, ujson.dumps(payload))
                         last_pub_time = now
