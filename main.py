@@ -3,14 +3,13 @@ import _thread
 import time
 import machine
 import config
-import gps
 import mqtt
-import imu
+import pump_controller
 import led_status
 
 # --- Thread Monitoring Heartbeats ---
 heartbeats = {
-    "gps": time.time(),
+    "pump": time.time(),
     "mqtt": time.time()
 }
 
@@ -20,16 +19,16 @@ def monitor_threads():
         time.sleep(10)
         now = time.time()
         
-        gps_age = now - heartbeats["gps"]
+        pump_age = now - heartbeats["pump"]
         mqtt_age = now - heartbeats["mqtt"]
         
-        if gps_age > 60 or mqtt_age > 60:
+        if pump_age > 60 or mqtt_age > 60:
             print("🚨 CRITICAL: Thread hang detected!")
-            print("GPS Age: %ds, MQTT Age: %ds" % (gps_age, mqtt_age))
+            print("Pump Thread Age: %ds, MQTT Thread Age: %ds" % (pump_age, mqtt_age))
             time.sleep(1)
             machine.reset()
 
-print("🚀 main.py started")
+print("🚀 main.py started - Submersible Pump Controller")
 
 # 0. Start LED thread for status indication
 _thread.start_new_thread(led_status.led_thread, ())
@@ -38,33 +37,27 @@ _thread.start_new_thread(led_status.led_thread, ())
 cfg = config.load_config()
 client_cfg = cfg.get("client", {})
 mode = client_cfg.get("mode", "ap")
-client_type = client_cfg.get("type", "rover")
 
 if mode != "sta":
     print("📡 AP mode active — waiting for configuration.")
+    # In AP mode, start the local setup server
+    try:
+        import server
+        server.start_server()
+    except Exception as e:
+        print("🚨 Failed to start AP server:", e)
     while True:
         time.sleep(10)
 
-print(f"✅ STA mode: {client_type.upper()} initialization")
+print("✅ STA mode: Running Pump Controller initialization")
 
-# 1. Selective Hardware Init
-if client_type == "rover":
-    print("🧭 Initializing IMU for Rover mode...")
-    imu_present = imu.init_imu()
-    if not imu_present:
-        print("⚠️ Warning: Rover starting without IMU (GPS-only)")
-else:
-    print("📍 Base Mode: Skipping IMU initialization.")
-
-# 2. Start GPS Thread
-# Ensure gps.gps_thread is updated to: def gps_thread(heartbeats=None):
-_thread.start_new_thread(gps.gps_thread, (heartbeats,))
+# 1. Start Pump Controller Thread
+_thread.start_new_thread(pump_controller.pump_thread, (heartbeats,))
 time.sleep(2)
 
-# 3. Start MQTT Thread
-# Ensure mqtt.mqtt_thread is updated to: def mqtt_thread(heartbeats=None):
+# 2. Start MQTT Communication Thread
 _thread.start_new_thread(mqtt.mqtt_thread, (heartbeats,))
 
-# 4. Run Watchdog
+# 3. Run Watchdog
 print("🛡️ System Monitor Active")
 monitor_threads()

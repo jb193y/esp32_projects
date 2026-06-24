@@ -7,7 +7,7 @@ import time
 import machine
 import _thread
 
-ALLOWED_SECTIONS = {"wifi", "mqtt", "gps", "client", "time", "ota", "server", "imu", "base"}
+ALLOWED_SECTIONS = {"wifi", "mqtt", "gps", "client", "time", "ota", "server", "imu", "base", "pump"}
 
 def reboot_response(msg):
     _start_delayed_reset()
@@ -81,6 +81,7 @@ def handle_status():
         "time": cfg.get("time"),
         "ota": cfg.get("ota"),
         "server": cfg.get("server"),
+        "pump": cfg.get("pump"),
         "network": net_info
     }
 

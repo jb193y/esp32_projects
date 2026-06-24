@@ -1,13 +1,8 @@
 {
   "client": {
-    "id": "esp32_base_01",
-    "type": "base",
-    "mode": "sta",
-    "base_id": "esp32_base_01"
-  },
-  "base": {
-    "known_lat": 33.10597762366573, 
-    "known_lon": -96.63314919533131
+    "id": "esp32_pump_01",
+    "type": "pump_controller",
+    "mode": "sta"
   },
   "wifi": {
     "networks": [
@@ -33,32 +28,56 @@
   "mqtt": {
     "server": "10.10.10.211",
     "port": 1883,
-    "publish_every_sec": 2,
-    "publish_every_sec_no_corr":2,
-    "nmea_publish_every_sec": 5,
-    "nmea_publish_flag": false,
-    "move_threshold_m": 8.0,
+    "publish_every_sec": 5,
+    "publish_every_sec_no_corr": 10,
     "max_retries": 5,
     "retry_delay": 5
   },
-  "gps": {
-    "uart_id": 2,
-    "baud": 9600,
-    "tx": 17,
-    "rx": 16,
-    "update_rate_hz": 1,
-    "dynamic_model": "",
-    "min_elevation": 15,
-    "avg_buf": 8,
-    "hdop_max": 3.0,
-    "kf_q": 1e-6,
-    "kf_r": 1e-4,
-    "stationary_speed_kmh": 0.8,
-    "stationary_meters": 2.0,
-    "stationary_count_lock": 6
-  },
-  "imu": {
-    "enabled": true
+  "pump": {
+    "mode": "MANUAL",
+    "pins": {
+      "relay_contactor": 12,
+      "contactor_feedback": 13,
+      "estop": 14,
+      "tank_high": 15,
+      "tank_low": 16,
+      "flow_sensor": 17,
+      "pressure_sensor": 8,
+      "btn_start": 18,
+      "btn_stop": 19,
+      "buzzer": 21,
+      "led_run": 2,
+      "led_fault": 22,
+      "solenoids": [25, 26],
+      "adc_v_a": 1,
+      "adc_v_b": 2,
+      "adc_v_c": 3,
+      "adc_i_a": 4,
+      "adc_i_b": 5,
+      "adc_i_c": 6
+    },
+    "thresholds": {
+      "v_over": 260.0,
+      "v_under": 180.0,
+      "i_overload": 15.0,
+      "i_dry_run": 4.0,
+      "i_unbalance_pct": 20.0,
+      "v_unbalance_pct": 10.0,
+      "overload_trip_time_sec": 5,
+      "dry_run_trip_time_sec": 10,
+      "no_flow_timeout_sec": 15,
+      "frequent_start_min_interval_sec": 300,
+      "power_return_delay_sec": 15,
+      "leak_detect_time_sec": 1800
+    },
+    "calibration": {
+      "v_a_factor": 1.0,
+      "v_b_factor": 1.0,
+      "v_c_factor": 1.0,
+      "i_a_factor": 1.0,
+      "i_b_factor": 1.0,
+      "i_c_factor": 1.0
+    }
   },
   "ota": {
     "base_url": "http://10.10.10.211:8000/fw",
@@ -68,7 +87,7 @@
   "server": {
     "enabled": true,
     "port": 80,
-    "ap_ssid": "ESP32_Setup",
+    "ap_ssid": "ESP32_Pump_Setup",
     "ap_password": "12345678"
   }
 }
