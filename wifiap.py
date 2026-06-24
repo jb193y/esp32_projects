@@ -45,6 +45,12 @@ def connect_wifi(networks):
     return False
 
 def start_ap_mode():
+    import config
+    cfg = config.load_config()
+    server_cfg = cfg.get("server", {})
+    ssid = server_cfg.get("ap_ssid", "ESP32_Pump_Setup")
+    password = server_cfg.get("ap_password", "12345678")
+
     sta = network.WLAN(network.STA_IF)
     sta.active(False)      # Important
 
@@ -52,8 +58,8 @@ def start_ap_mode():
     ap.active(True)
 
     ap.config(
-        essid="ESP32_Setup",
-        password="12345678",
+        essid=ssid,
+        password=password,
         authmode=3
     )
 
