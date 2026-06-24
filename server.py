@@ -39,13 +39,19 @@ def start_server():
                 conn.close()
                 continue
 
-            method, path, *_ = request.split(" ", 2)
+            parts = request.split(" ", 2)
+            if len(parts) < 2:
+                conn.close()
+                continue
+            method, path = parts[0], parts[1]
             print("HTTP", method, path)
 
             if method == "GET" and path == "/status":
                 response = handle_status()
             elif method == "POST" and path == "/update":
                 response = handle_update(request)
+            elif method == "POST" and (path == "/setup" or path == "/api/setup"):
+                response = handle_setup_post(request)
             else:
                 response = {"status": "error", "message": "Invalid endpoint"}
 
@@ -87,7 +93,8 @@ def handle_status():
 
 def handle_update(request):
     try:
-        body = request.split("\r\n\r\n", 1)[1]
+        parts = request.split("\r\n\r\n", 1)
+        body = parts[1] if len(parts) > 1 else ""
         data = ujson.loads(body)
     except Exception:
         return {"status": "error", "message": "Invalid JSON payload"}
@@ -142,7 +149,8 @@ def handle_setup_post(request):
     Payload: {"wifi_ssid": "...", "wifi_pass": "...", "mqtt_broker": "..."}
     """
     try:
-        body = request.split("\r\n\r\n", 1)[1]
+        parts = request.split("\r\n\r\n", 1)
+        body = parts[1] if len(parts) > 1 else ""
         data = ujson.loads(body)
         
         # Structure the configuration update
