@@ -1,0 +1,7 @@
+WIDTH = 16
+HEIGHT = 32
+FIRST = 32
+LAST = 127
+
+FONT = \
+b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' * (LAST - FIRST + 1)

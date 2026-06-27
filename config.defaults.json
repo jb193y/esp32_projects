@@ -84,6 +84,22 @@
     "manifest": "manifest.json",
     "auto_apply": false
   },
+  "display": {
+    "enabled": true,
+    "width": 320,
+    "height": 240,
+    "rotation": 1,
+    "xstart": 0,
+    "ystart": 0,
+    "pins": {
+      "dc": 39,
+      "sck": 41,
+      "mosi": 40,
+      "rst": 42,
+      "cs": 47,
+      "backlight": 46
+    }
+  },
   "server": {
     "enabled": true,
     "port": 80,
