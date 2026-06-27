@@ -20,7 +20,9 @@ def get_local_file_hash(path):
         return None
 
 def main():
-    project_root = os.path.dirname(os.path.abspath(__file__))
+    # Resolve project root (parent of utils) and mpremote path
+    utils_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(utils_dir)
     mpremote = os.path.join(project_root, '.venv', 'Scripts', 'mpremote.exe')
     
     if not os.path.exists(mpremote):

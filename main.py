@@ -41,6 +41,15 @@ cfg = config.load_config()
 client_cfg = cfg.get("client", {})
 mode = client_cfg.get("mode", "ap")
 
+# Start Display Manager
+if cfg.get("display", {}).get("enabled", True):
+    try:
+        import display_manager
+        heartbeats["display"] = time.time()
+        display_manager.start(heartbeats)
+    except Exception as e:
+        print("🚨 Failed to start display manager:", e)
+
 # 1. Start Pump Controller Thread (Offline protection always runs)
 _thread.start_new_thread(pump_controller.pump_thread, (heartbeats,))
 time.sleep(2)

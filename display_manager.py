@@ -195,7 +195,7 @@ def draw_dashboard():
         else:
             tft.text("[HW ACTIVE]", 180, 212, CYAN, BLACK)
 
-def display_thread():
+def display_thread(heartbeats=None):
     global running
     print("📺 Display status refresh thread started.")
     running = True
@@ -207,6 +207,8 @@ def display_thread():
         print("🚨 Initial draw_dashboard failed:", e)
         
     while running:
+        if heartbeats is not None:
+            heartbeats["display"] = time.time()
         try:
             draw_dashboard()
         except Exception as e:
@@ -215,11 +217,11 @@ def display_thread():
         
     print("📺 Display status refresh thread stopped.")
 
-def start():
+def start(heartbeats=None):
     if not init_display():
         return
     _thread.stack_size(8192)
-    _thread.start_new_thread(display_thread, ())
+    _thread.start_new_thread(display_thread, (heartbeats,))
 
 def stop():
     global running
