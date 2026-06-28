@@ -197,8 +197,11 @@ def mqtt_thread(heartbeats=None):
     server = mqtt_cfg.get("server", "10.10.10.211")
     port = int(mqtt_cfg.get("port", 1883))
     
-    pub_topic = f"pump/{client_id}/telemetry"
-    cmd_topic = f"pump/{client_id}/command"
+    device_type = client_cfg.get("type", "pump")
+    hw_ver = client_cfg.get("hardware_version", "esp32_1.0")
+    pub_topic = f"{device_type}/{client_id}/telemetry"
+    cmd_topic = f"{device_type}/{client_id}/command"
+    broadcast_cmd_topic = f"{device_type}/{hw_ver}/command"
     
     PUBLISH_EVERY_SEC = int(mqtt_cfg.get("publish_every_sec", 5))
 
@@ -217,6 +220,7 @@ def mqtt_thread(heartbeats=None):
             client.set_callback(mqtt_callback)
             client.connect()
             client.subscribe(cmd_topic)
+            client.subscribe(broadcast_cmd_topic)
             
             publish_status(client, "online", "Pump controller online")
             publish_version_announcement(client)
