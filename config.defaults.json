@@ -45,6 +45,7 @@
       "pressure_sensor": 8,
       "btn_start": 18,
       "btn_stop": 19,
+      "btn_setup": 0,
       "buzzer": 21,
       "led_run": 2,
       "led_fault": 22,

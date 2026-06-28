@@ -76,6 +76,7 @@ def init_hardware():
         pins["flow_sensor"] = machine.Pin(pins_cfg.get("flow_sensor", 17), machine.Pin.IN, machine.Pin.PULL_DOWN)
         pins["btn_start"] = machine.Pin(pins_cfg.get("btn_start", 18), machine.Pin.IN, machine.Pin.PULL_UP)
         pins["btn_stop"] = machine.Pin(pins_cfg.get("btn_stop", 19), machine.Pin.IN, machine.Pin.PULL_UP)
+        pins["btn_setup"] = machine.Pin(pins_cfg.get("btn_setup", 0), machine.Pin.IN, machine.Pin.PULL_UP)
         
         # ADCs
         adcs["v_a"] = machine.ADC(machine.Pin(pins_cfg.get("adc_v_a", 1)))
@@ -391,6 +392,7 @@ def pump_thread(heartbeats=None):
     overload_duration = 0
     dryrun_duration = 0
     flow_duration = 0
+    setup_press_duration = 0
     
     while True:
         try:
@@ -416,6 +418,28 @@ def pump_thread(heartbeats=None):
                     pump_command("PUMP_OFF")
                 elif pins["btn_start"].value() == 0 and mode != "MAINTENANCE":
                     pump_command("PUMP_ON")
+                
+                # Check setup/pairing button (active-low, BOOT pin)
+                if pins["btn_setup"].value() == 0:
+                    setup_press_duration += 1
+                    print(f"⏳ Setup button held: {setup_press_duration}s...")
+                    if setup_press_duration >= 5:
+                        print("🧹 Entering pairing mode via setup button press! Saving config and resetting...")
+                        # Turn off pump immediately for safety
+                        pump_command("PUMP_OFF")
+                        # Update config mode to ap
+                        cfg_to_update = config.load_config()
+                        cfg_to_update.setdefault("client", {})["mode"] = "ap"
+                        config.save_config(cfg_to_update)
+                        # Sound buzzer briefly to signal success
+                        try:
+                            pins["buzzer"].value(1)
+                            time.sleep(0.5)
+                            pins["buzzer"].value(0)
+                        except: pass
+                        machine.reset()
+                else:
+                    setup_press_duration = 0
                     
             # 3. State Machine Processing
             now = time.time()

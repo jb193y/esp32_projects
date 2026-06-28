@@ -33,6 +33,31 @@ def monitor_threads():
 
 print("🚀 main.py started - Submersible Pump Controller")
 
+# Check setup button on boot for pairing override
+forced_ap_mode = False
+try:
+    # Load config to get the setup button pin (default to 0 / BOOT button)
+    boot_cfg = config.load_config()
+    setup_pin_num = boot_cfg.get("pump", {}).get("pins", {}).get("btn_setup", 0)
+    
+    # Initialize Pin (active-low, with pull-up)
+    btn_setup = machine.Pin(setup_pin_num, machine.Pin.IN, machine.Pin.PULL_UP)
+    
+    # If button is pressed (value is 0) on boot
+    if btn_setup.value() == 0:
+        print("⏳ Checking Setup Button Boot Override (hold for 3s)...")
+        held_count = 0
+        # Wait up to 3 seconds (30 * 100ms)
+        while btn_setup.value() == 0 and held_count < 30:
+            time.sleep_ms(100)
+            held_count += 1
+            
+        if held_count >= 30:
+            print("🚀 SETUP OVERRIDE ACTIVE: Forcing Access Point Setup Mode!")
+            forced_ap_mode = True
+except Exception as e:
+    print("⚠️ Setup button boot-check error:", e)
+
 # 0. Start LED thread for status indication
 _thread.start_new_thread(led_status.led_thread, ())
 
@@ -40,6 +65,9 @@ _thread.start_new_thread(led_status.led_thread, ())
 cfg = config.load_config()
 client_cfg = cfg.get("client", {})
 mode = client_cfg.get("mode", "ap")
+
+if forced_ap_mode:
+    mode = "ap"
 
 # Start Display Manager
 if cfg.get("display", {}).get("enabled", True):

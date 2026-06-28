@@ -85,8 +85,45 @@ def init_display():
         print("🚨 Display initialization failed:", e)
         return False
 
+def draw_setup_portal(cfg):
+    # 1. Header Banner
+    tft.fill_rect(0, 0, 320, 30, BLUE)
+    tft.text("PAIRING MODE ACTIVE", 10, 11, WHITE, BLUE)
+    
+    # 2. Divider Line
+    tft.fill_rect(0, 30, 320, 1, WHITE)
+    
+    # 3. Setup Body
+    tft.fill_rect(0, 35, 320, 160, BLACK)
+    tft.text("To configure this controller:", 10, 45, WHITE, BLACK)
+    
+    tft.text("1. Connect to WiFi network:", 10, 75, CYAN, BLACK)
+    
+    ap_ssid = cfg.get("server", {}).get("ap_ssid", "ESP32_Pump_Setup")
+    ap_pass = cfg.get("server", {}).get("ap_password", "12345678")
+    
+    tft.text(f"   SSID: {ap_ssid}", 10, 95, YELLOW, BLACK)
+    tft.text(f"   Pass: {ap_pass}", 10, 115, YELLOW, BLACK)
+    
+    tft.text("2. Open your mobile app or browser:", 10, 145, CYAN, BLACK)
+    
+    ap_if = network.WLAN(network.AP_IF)
+    ap_ip = ap_if.ifconfig()[0] if ap_if.active() else "192.168.4.1"
+    tft.text(f"   Go to: http://{ap_ip}", 10, 165, YELLOW, BLACK)
+    
+    # 4. Footer
+    tft.fill_rect(0, 195, 320, 45, BLACK)
+    tft.fill_rect(0, 198, 320, 1, GRAY)
+    tft.text("WAITING FOR MOBILE CONNECTION...", 10, 212, GREEN, BLACK)
+
 def draw_dashboard():
     if tft is None:
+        return
+        
+    cfg = config.load_config()
+    client_mode = cfg.get("client", {}).get("mode", "ap")
+    if client_mode == "ap":
+        draw_setup_portal(cfg)
         return
         
     # Read variables safely under pump controller lock

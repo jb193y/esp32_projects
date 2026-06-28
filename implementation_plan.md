@@ -244,4 +244,39 @@ We will create a new Python module `display_manager.py` that:
 ### 8.3. Main Integration (`main.py`)
 Modify `main.py` to import `display_manager` and call `display_manager.start()` if display is enabled in config.
 
+---
+
+## 9. Hardware-Triggered Pairing/Setup Mode
+
+We are implementing a physical button trigger to bring the ESP32 Pump Starter Controller into pairing/setup mode (Access Point mode) without needing to configure it beforehand.
+
+### 9.1. Setup Button Pin Assignment
+- We will define a setup button GPIO pin in the configuration. By default, it will be mapped to **GPIO 0** (which is the physical **BOOT/PRG** button built into almost all ESP32 development boards):
+  - `"btn_setup": 0` under `pump.pins` in `config.defaults.json` and `config.json`.
+
+### 9.2. Boot-Time Trigger (`main.py`)
+- During the boot sequence, if the setup button (GPIO 0) is held down for **3 seconds**, the device will temporarily force Access Point (`ap`) mode. This provides a hard override in case the device gets stuck trying to connect to a configured WiFi network.
+
+### 9.3. Runtime Trigger (`pump_controller.py`)
+- During normal operation, the background `pump_thread` will monitor the setup button pin.
+- If the button is held pressed (active-low, pin value `0`) for **5 seconds**:
+  - The controller will turn OFF the contactor relay and buzzer for safety.
+  - It will update the configuration to set `"client": {"mode": "ap"}`.
+  - It will save the configuration to disk.
+  - It will perform a system reset (`machine.reset()`) to boot into the provisioning Access Point portal.
+
+### 9.4. Display Setup Portal Dashboard (`display_manager.py`)
+- If the system starts up in Access Point setup mode (`client.mode == "ap"`):
+  - The screen will display a distinct **Pairing Mode** dashboard:
+    - **Header Banner**: Solid Blue (`0x001F`) with white text reading `"PAIRING MODE ACTIVE"`.
+    - **Body Information**:
+      - `"To configure this device:"`
+      - `"1. Connect to WiFi network:"`
+      - `"   SSID: ESP32_Pump_Setup"`
+      - `"   Pass: 12345678"`
+      - `"2. Open mobile app or browser"`
+      - `"   IP: 192.168.4.1"`
+    - **Footer Status**: Shows active setup connection info (how many clients are connected to the AP).
+
+
 
