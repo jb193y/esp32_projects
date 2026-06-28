@@ -140,6 +140,13 @@ def run_ota_safely(client, cmd):
             publish_status(client, "online", f"Already on version {current_version}")
         return
 
+    device_type = client_cfg.get("type", "pump")
+    hw_ver = client_cfg.get("hardware_version", "esp32_1.0")
+    if target_version:
+        release_url = f"{base_url.rstrip('/')}/{device_type}/{hw_ver}/{target_version}"
+    else:
+        release_url = base_url
+
     try:
         led_status.set_status("OTA_UPDATE")
         if client:
@@ -147,13 +154,13 @@ def run_ota_safely(client, cmd):
 
         if cmd.get("manifest") is True:
             m_name = cmd.get("manifest_name") or ota_cfg.get("manifest", "manifest.json")
-            print("📡 Fetching Manifest:", m_name)
-            manifest = fetch_manifest(base_url, m_name)
-            success = ota_update(base_url, manifest=manifest)
+            print("📡 Fetching Manifest from:", release_url)
+            manifest = fetch_manifest(release_url, m_name)
+            success = ota_update(release_url, manifest=manifest)
         else:
             files = cmd.get("files", [])
             hashes = cmd.get("sha256", {})
-            success = ota_update(base_url, files=files, hashes=hashes)
+            success = ota_update(release_url, files=files, hashes=hashes)
 
         if success and client:
             publish_status(client, "rebooting", "OTA Success - Rebooting")
