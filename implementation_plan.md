@@ -278,5 +278,50 @@ We are implementing a physical button trigger to bring the ESP32 Pump Starter Co
       - `"   IP: 192.168.4.1"`
     - **Footer Status**: Shows active setup connection info (how many clients are connected to the AP).
 
+---
+
+## 10. Ecosystem-Standard OTA Update Flow
+
+We are implementing a standardized, lightweight OTA update check that avoids unnecessary file downloads and provides version visibility to the ecosystem broker.
+
+### 10.1. Version Configurations
+We will define key version parameters in the `client` configuration block inside `config.defaults.json` and `config.json`:
+- `"type"`: `"pump"` (Device type identifier)
+- `"hardware_version"`: `"esp32_1.0"` (Hardware architecture identifier)
+- `"firmware_version"`: `"firmesp32_v2"` (Current firmware code version)
+
+### 10.2. Version Announcement on Startup (`mqtt.py`)
+- Upon connecting successfully to the MQTT broker, the device will announce its online status, IP address, and firmware version.
+- **Topic**: `{type_of_device}/{hardware_version}/status`
+  - Example: `pump/esp32_1.0/status`
+- **Payload**: JSON dictionary reporting device statistics:
+  ```json
+  {
+    "client_id": "esp32_pump_01",
+    "status": "online",
+    "firmware_version": "firmesp32_v2",
+    "ip": "192.168.1.104",
+    "rssi": -65
+  }
+  ```
+- This keeps the topic paths static and makes it extremely simple for the broker/backend to subscribe to status updates (e.g., `pump/+/status`).
+
+### 10.3. Local Version Check before Download (`mqtt.py`)
+- When receiving an OTA command payload on the command channel:
+  ```json
+  {
+    "command": "OTA",
+    "version": "firmesp32_v3",
+    "manifest": true
+  }
+  ```
+- The client will check the target `"version"` string.
+- If the target `"version"` matches the client's current `"firmware_version"`:
+  - The client skips fetching any files or manifests.
+  - It prints: `ℹ️ Firmware is already up to date: firmesp32_v2`
+  - It publishes a status update back to the server: `Already on version firmesp32_v2`
+- If the versions differ (or no version parameter is provided), the client will fetch the manifest/files and apply the update.
+
+
 
 

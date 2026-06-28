@@ -1,8 +1,10 @@
 {
   "client": {
     "id": "esp32_pump_01",
-    "type": "pump_controller",
-    "mode": "sta"
+    "type": "pump",
+    "mode": "sta",
+    "hardware_version": "esp32_1.0",
+    "firmware_version": "firmesp32_v2"
   },
   "wifi": {
     "networks": [

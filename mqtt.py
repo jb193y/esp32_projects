@@ -39,6 +39,33 @@ def publish_status(client, status="", reason="Running"):
     except:
         pass
 
+def publish_version_announcement(client):
+    """Announces online status, IP address, and firmware version to the ecosystem broker."""
+    try:
+        cfg = config.load_config()
+        client_cfg = cfg.get("client", {})
+        client_id = client_cfg.get("id", "esp32_pump_01")
+        device_type = client_cfg.get("type", "pump")
+        hw_ver = client_cfg.get("hardware_version", "esp32_1.0")
+        fw_ver = client_cfg.get("firmware_version", "firmesp32_v2")
+        
+        # Get IP address
+        sta = network.WLAN(network.STA_IF)
+        ip_addr = sta.ifconfig()[0] if sta.isconnected() else "0.0.0.0"
+        
+        topic = f"{device_type}/{hw_ver}/status"
+        payload = ujson.dumps({
+            "client_id": client_id,
+            "status": "online",
+            "firmware_version": fw_ver,
+            "ip": ip_addr,
+            "timestamp": time.time()
+        })
+        client.publish(topic, payload)
+        print(f"📡 MQTT OTA VERSION ANNOUNCED on {topic}: {payload}")
+    except Exception as e:
+        print("⚠️ Failed to publish version announcement:", e)
+
 def publish_alert(client, event_type, message):
     """Sends an immediate alert message."""
     try:
@@ -96,6 +123,7 @@ def handle_command(payload):
 def run_ota_safely(client, cmd):
     gc.collect()
     cfg = config.load_config()
+    client_cfg = cfg.get("client", {})
     ota_cfg = cfg.get("ota", {})
     base_url = ota_cfg.get("base_url")
     
@@ -103,10 +131,19 @@ def run_ota_safely(client, cmd):
         print("⚠️ OTA missing ota.base_url")
         return
 
+    # Check firmware version from incoming OTA command
+    target_version = cmd.get("version")
+    current_version = client_cfg.get("firmware_version", "firmesp32_v2")
+    if target_version and target_version == current_version:
+        print(f"ℹ️ Firmware is already up to date: {current_version} (skipped OTA download)")
+        if client:
+            publish_status(client, "online", f"Already on version {current_version}")
+        return
+
     try:
         led_status.set_status("OTA_UPDATE")
         if client:
-            publish_status(client, "updating", "OTA Update Starting")
+            publish_status(client, "updating", f"OTA starting from {current_version} to {target_version or 'unknown'}")
 
         if cmd.get("manifest") is True:
             m_name = cmd.get("manifest_name") or ota_cfg.get("manifest", "manifest.json")
@@ -175,6 +212,7 @@ def mqtt_thread(heartbeats=None):
             client.subscribe(cmd_topic)
             
             publish_status(client, "online", "Pump controller online")
+            publish_version_announcement(client)
             print("✅ MQTT Connected to %s" % server)
             led_status.set_status("MQTT_CONNECTED")
             
