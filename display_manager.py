@@ -116,11 +116,51 @@ def draw_setup_portal(cfg):
     tft.fill_rect(0, 198, 320, 1, GRAY)
     tft.text("WAITING FOR MOBILE CONNECTION...", 10, 212, GREEN, BLACK)
 
+ota_status = None
+last_command = None
+last_command_time = 0
+
+def set_ota_status(status):
+    global ota_status
+    ota_status = status
+
+def show_command_toast(cmd_name):
+    global last_command, last_command_time
+    last_command = cmd_name
+    last_command_time = time.time()
+
+def draw_ota_screen(status):
+    # 1. Header Banner
+    tft.fill_rect(0, 0, 320, 30, RED)
+    tft.text("OTA FIRMWARE UPDATE", 10, 11, WHITE, RED)
+    
+    # 2. Divider Line
+    tft.fill_rect(0, 30, 320, 1, WHITE)
+    
+    # 3. Body
+    tft.fill_rect(0, 35, 320, 160, BLACK)
+    tft.text("FIRMWARE UPGRADE IN PROGRESS", 10, 60, YELLOW, BLACK)
+    tft.text(status, 10, 95, WHITE, BLACK)
+    
+    tft.text("WARNING: DO NOT POWER OFF!", 10, 140, RED, BLACK)
+    
+    # 4. Footer
+    tft.fill_rect(0, 195, 320, 45, BLACK)
+    tft.fill_rect(0, 198, 320, 1, GRAY)
+    tft.text("DEVICE WILL REBOOT ON COMPLETE", 10, 212, GREEN, BLACK)
+
 def draw_dashboard():
     if tft is None:
         return
         
     cfg = config.load_config()
+    
+    # Check OTA status override
+    global ota_status
+    if ota_status is not None:
+        draw_ota_screen(ota_status)
+        return
+        
     client_mode = cfg.get("client", {}).get("mode", "ap")
     if client_mode == "ap":
         draw_setup_portal(cfg)
@@ -231,6 +271,12 @@ def draw_dashboard():
             tft.text("[SIMULATION]", 180, 212, YELLOW, BLACK)
         else:
             tft.text("[HW ACTIVE]", 180, 212, CYAN, BLACK)
+
+    # 5. Command Toast Overlay (shows for 3 seconds)
+    global last_command, last_command_time
+    if last_command is not None and (time.time() - last_command_time < 3):
+        tft.fill_rect(0, 195, 320, 45, YELLOW)
+        tft.text(f"📥 CMD: {last_command}", 10, 212, BLACK, YELLOW)
 
 def display_thread(heartbeats=None):
     global running

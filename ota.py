@@ -42,6 +42,11 @@ def download_and_stage(base_url, fname):
     url = "%s/%s" % (base_url.rstrip("/"), fname)
     tmp = fname + ".new"
     print("📡 OTA Downloading:", fname)
+    try:
+        import display_manager
+        display_manager.set_ota_status(f"Downloading: {fname}")
+    except:
+        pass
     _download_stream(url, tmp)
     return tmp
 
@@ -49,6 +54,11 @@ def apply_staged(fname):
     """Atomic swap of the new file into place."""
     tmp = fname + ".new"
     bak = fname + ".bak"
+    try:
+        import display_manager
+        display_manager.set_ota_status(f"Applying: {fname}")
+    except:
+        pass
     try:
         if bak in os.listdir(): os.remove(bak)
     except: pass
@@ -89,6 +99,12 @@ def ota_update(base_url, files=None, hashes=None, manifest=None):
     if not files:
         raise Exception("OTA: No files provided")
 
+    try:
+        import display_manager
+        display_manager.set_ota_status("Starting update...")
+    except:
+        pass
+
     staged = []
     try:
         for fname in files:
@@ -105,9 +121,19 @@ def ota_update(base_url, files=None, hashes=None, manifest=None):
             apply_staged(fname)
 
         print("✅ OTA files staged and applied.")
+        try:
+            import display_manager
+            display_manager.set_ota_status("Success! Rebooting...")
+        except:
+            pass
         return True  # Return True so the caller knows it's safe to reboot
 
     except Exception as e:
         print("❌ OTA Error - rolling back:", e)
+        try:
+            import display_manager
+            display_manager.set_ota_status(None)
+        except:
+            pass
         rollback(staged)
         raise e

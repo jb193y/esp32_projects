@@ -136,6 +136,11 @@ def run_ota_safely(client, cmd):
     current_version = client_cfg.get("firmware_version", "firmesp32_v2")
     if target_version and target_version == current_version:
         print(f"ℹ️ Firmware is already up to date: {current_version} (skipped OTA download)")
+        try:
+            import display_manager
+            display_manager.show_command_toast("OTA (Up to date)")
+        except:
+            pass
         if client:
             publish_status(client, "online", f"Already on version {current_version}")
         return
@@ -169,6 +174,12 @@ def run_ota_safely(client, cmd):
 
     except Exception as e:
         print("❌ OTA Failed:", e)
+        try:
+            import display_manager
+            display_manager.set_ota_status(None)
+            display_manager.show_command_toast("OTA Failed!")
+        except:
+            pass
         led_status.set_status("MQTT_CONNECTED")
 
 def mqtt_callback(topic, msg):
@@ -178,6 +189,12 @@ def mqtt_callback(topic, msg):
         payload = ujson.loads(msg.decode())
     except: 
         return
+
+    try:
+        import display_manager
+        display_manager.show_command_toast(payload.get("command", "UNKNOWN"))
+    except:
+        pass
 
     if payload.get("command") == "OTA":
         print("🚩 OTA Queued for execution...")
