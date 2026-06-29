@@ -2,9 +2,9 @@
   "client": {
     "id": "esp32_pump_01",
     "type": "pump",
-    "mode": "sta",
+    "mode": "ap",
     "hardware_version": "esp32_1.0",
-    "firmware_version": "firmesp32_v2"
+    "firmware_version": "firmesp32_v4"
   },
   "wifi": {
     "networks": [
