@@ -115,6 +115,9 @@ def main():
     
     unwanted_files = []
     for dev_file in device_files.keys():
+        # Do not clean up .bak files to preserve local rollback snapshots
+        if dev_file.endswith('.bak'):
+            continue
         if dev_file not in expected_files and dev_file not in preserve_list:
             unwanted_files.append(dev_file)
             

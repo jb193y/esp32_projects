@@ -149,6 +149,8 @@ def main():
 
     # Check for extra files on device
     for rel_path in sorted(device_files.keys()):
+        if rel_path.endswith('.bak'):
+            continue
         if rel_path not in local_files:
             print(f"{rel_path:<35} | Extra on Dev    | {'-':<10} | {device_files[rel_path]['size']:<10}")
             extra_on_device.append(rel_path)
