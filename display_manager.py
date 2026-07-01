@@ -105,11 +105,8 @@ def draw_setup_portal(cfg):
     tft.text(f"   SSID: {ap_ssid}", 10, 95, YELLOW, BLACK)
     tft.text(f"   Pass: {ap_pass}", 10, 115, YELLOW, BLACK)
     
-    tft.text("2. Open your mobile app or browser:", 10, 145, CYAN, BLACK)
-    
-    ap_if = network.WLAN(network.AP_IF)
-    ap_ip = ap_if.ifconfig()[0] if ap_if.active() else "192.168.4.1"
-    tft.text(f"   Go to: http://{ap_ip}", 10, 165, YELLOW, BLACK)
+    tft.text("2. Open your mobile app:", 10, 145, CYAN, BLACK)
+    tft.text("   And follow provisioning steps", 10, 165, YELLOW, BLACK)
     
     # 4. Footer
     tft.fill_rect(0, 195, 320, 45, BLACK)
