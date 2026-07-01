@@ -106,24 +106,39 @@ def ota_update(base_url, files=None, hashes=None, manifest=None):
         pass
 
     staged = []
+    skipped = []
     try:
         for fname in files:
-            download_and_stage(base_url, fname)
-            staged.append(fname)
-            
+            # Check if local file already matches the manifest hash
+            is_synced = False
             if hashes and fname in hashes:
-                actual_hash = sha256_file(fname + ".new")
-                if actual_hash != hashes[fname]:
-                    raise Exception("Hash mismatch: %s" % fname)
+                expected_hash = hashes[fname]
+                local_hash = sha256_file(fname)
+                if local_hash == expected_hash:
+                    is_synced = True
+            
+            if is_synced:
+                print(f" - Up to date (skipped download): {fname}")
+                skipped.append(fname)
+            else:
+                print(f" - Fetching out-of-sync file: {fname}")
+                download_and_stage(base_url, fname)
+                staged.append(fname)
+                
+                # Verify the downloaded file hash
+                if hashes and fname in hashes:
+                    actual_hash = sha256_file(fname + ".new")
+                    if actual_hash != hashes[fname]:
+                        raise Exception("Hash mismatch: %s" % fname)
 
-        # Apply changes to the filesystem
+        # Apply changes to the filesystem (only for newly downloaded files!)
         for fname in staged:
             apply_staged(fname)
 
-        print("✅ OTA files staged and applied.")
+        print(f"✅ OTA complete. Synced: {len(staged)} files, Skipped: {len(skipped)} files.")
         try:
             import display_manager
-            display_manager.set_ota_status("Success! Rebooting...")
+            display_manager.set_ota_status(f"Done! Synced {len(staged)}")
         except:
             pass
         return True  # Return True so the caller knows it's safe to reboot
