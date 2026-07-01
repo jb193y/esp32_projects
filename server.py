@@ -6,6 +6,7 @@ import network
 import time
 import machine
 import _thread
+import ubinascii
 
 ALLOWED_SECTIONS = {"wifi", "mqtt", "gps", "client", "time", "ota", "server", "pump", "display"}
 
@@ -25,7 +26,6 @@ def start_server():
     port = int(cfg.get("server", {}).get("port", 80))
 
     s = socket.socket()
-    # Allow port reuse to prevent address-in-use errors on quick reboots
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(("0.0.0.0", port))
     s.listen(1)
@@ -34,7 +34,6 @@ def start_server():
     while True:
         try:
             conn, addr = s.accept()
-            # Set timeout on connection to prevent hanging the setup server thread
             conn.settimeout(5.0)
             
             request = conn.recv(4096).decode()
@@ -57,10 +56,14 @@ def start_server():
 
             if method == "GET" and path == "/status":
                 response = handle_status()
+            elif method == "GET" and path == "/info":
+                response = handle_info()
             elif method == "POST" and path == "/update":
                 response = handle_update(request)
             elif method == "POST" and (path == "/setup" or path == "/api/setup"):
                 response = handle_setup_post(request)
+            elif method == "POST" and path == "/provision":
+                response = handle_provision(request)
             else:
                 response = {"status": "error", "message": "Invalid endpoint"}
 
@@ -103,6 +106,29 @@ def handle_status():
         "network": net_info
     }
 
+def handle_info():
+    """Returns device identification details for the mobile app setup wizard."""
+    cfg = config.load_config()
+    client_cfg = cfg.get("client", {})
+    
+    # Get MAC Address
+    wlan = network.WLAN(network.STA_IF)
+    try:
+        mac_bytes = wlan.config('mac')
+        mac_str = ":".join(["%02x" % b for b in mac_bytes])
+    except:
+        mac_str = "00:00:00:00:00:00"
+        
+    device_id = client_cfg.get("id", "esp32_pump_01")
+    device_type = client_cfg.get("type", "pump")
+    
+    return {
+        "device_id": device_id,
+        "device_type": device_type,
+        "default_name": f"Agripulse {device_type.capitalize()} Controller",
+        "mac": mac_str
+    }
+
 def handle_update(request):
     try:
         parts = request.split("\r\n\r\n", 1)
@@ -137,7 +163,7 @@ def handle_update(request):
 
 def handle_setup_post(request):
     """
-    Endpoint: POST /api/setup
+    Legacy Endpoint: POST /api/setup
     Payload: {"wifi_ssid": "...", "wifi_pass": "...", "mqtt_broker": "...", "client_id": "...", "pump_mode": "..."}
     """
     try:
@@ -147,28 +173,73 @@ def handle_setup_post(request):
         
         config_patch = {}
         
-        # Configure WiFi if SSID is provided
+        # Configure WiFi
         if 'wifi_ssid' in data:
             ssid = data['wifi_ssid']
             password = data.get('wifi_pass', '')
             config_patch["wifi"] = {"networks": [{"ssid": ssid, "password": password}]}
             
-        # Configure MQTT broker if provided
+        # Configure MQTT broker
         if 'mqtt_broker' in data:
             config_patch["mqtt"] = {"server": data['mqtt_broker']}
             
-        # Configure client ID if provided
+        # Configure client ID
         if 'client_id' in data:
             config_patch["client"] = {"id": data['client_id']}
             
-        # Configure pump mode if provided
+        # Configure pump mode
         if 'pump_mode' in data:
             config_patch.setdefault("pump", {})["mode"] = data['pump_mode']
             
         if not config_patch:
             return {"status": "error", "message": "No setup data provided"}
 
-        # Force station mode for next boot to join home network
+        # Force station mode for next boot
+        config_patch.setdefault("client", {})["mode"] = "sta"
+        
+        # Save and trigger reboot
+        config.update_config(config_patch)
+        return reboot_response("Provisioning complete. Rebooting to client mode...")
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+def handle_provision(request):
+    """
+    Agripulse App Endpoint: POST /provision
+    Payload: {"ssid": "...", "password": "...", "mqtt_broker": "...", "mqtt_port": 1883, "mqtt_topic": "..."}
+    """
+    try:
+        parts = request.split("\r\n\r\n", 1)
+        body = parts[1] if len(parts) > 1 else ""
+        data = ujson.loads(body)
+        
+        config_patch = {}
+        
+        # WiFi configuration
+        if 'ssid' in data:
+            ssid = data['ssid']
+            password = data.get('password', '')
+            config_patch["wifi"] = {"networks": [{"ssid": ssid, "password": password}]}
+            
+        # MQTT Broker configuration
+        mqtt_update = {}
+        if 'mqtt_broker' in data:
+            mqtt_update["server"] = data['mqtt_broker']
+        if 'mqtt_port' in data:
+            mqtt_update["port"] = int(data['mqtt_port'])
+        if 'mqtt_topic' in data:
+            base_topic = data['mqtt_topic'].rstrip('/')
+            # Map the base topic to specific telemetry and command sub-topics
+            mqtt_update["publish_topic"] = f"{base_topic}/telemetry"
+            mqtt_update["command_topic"] = f"{base_topic}/command"
+            
+        if mqtt_update:
+            config_patch["mqtt"] = mqtt_update
+            
+        if not config_patch:
+            return {"status": "error", "message": "No configuration provided"}
+
+        # Force station mode for next boot to join the newly provisioned router network
         config_patch.setdefault("client", {})["mode"] = "sta"
         
         # Save and trigger reboot

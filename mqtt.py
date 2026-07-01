@@ -216,8 +216,8 @@ def mqtt_thread(heartbeats=None):
     
     device_type = client_cfg.get("type", "pump")
     hw_ver = client_cfg.get("hardware_version", "esp32_1.0")
-    pub_topic = f"{device_type}/{client_id}/telemetry"
-    cmd_topic = f"{device_type}/{client_id}/command"
+    pub_topic = mqtt_cfg.get("publish_topic") or f"{device_type}/{client_id}/telemetry"
+    cmd_topic = mqtt_cfg.get("command_topic") or f"{device_type}/{client_id}/command"
     broadcast_cmd_topic = f"{device_type}/{hw_ver}/command"
     
     PUBLISH_EVERY_SEC = int(mqtt_cfg.get("publish_every_sec", 5))
