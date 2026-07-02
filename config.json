@@ -4,7 +4,9 @@
     "type": "pump",
     "mode": "ap",
     "hardware_version": "esp32_1.0",
-    "firmware_version": "firmesp32_v7"
+    "firmware_version": "firmesp32_v7",
+    "serial_number": "SN-2026-0701-09",
+    "model": "AP-Pump-Controller"
   },
   "wifi": {
     "networks": [
@@ -106,7 +108,7 @@
   "server": {
     "enabled": true,
     "port": 80,
-    "ap_ssid": "ESP32_Pump_Setup",
+    "ap_ssid": "AP-Pump-Controller",
     "ap_password": "12345678"
   }
 }

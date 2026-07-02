@@ -121,12 +121,17 @@ def handle_info():
         
     device_id = client_cfg.get("id", "esp32_pump_01")
     device_type = client_cfg.get("type", "pump")
+    serial_number = client_cfg.get("serial_number", "SN-UNKNOWN")
+    model = client_cfg.get("model", "MODEL-UNKNOWN")
     
     return {
         "device_id": device_id,
         "device_type": device_type,
         "default_name": f"Agripulse {device_type.capitalize()} Controller",
-        "mac": mac_str
+        "mac": mac_str,
+        "serial_number": serial_number,
+        "sn": serial_number,
+        "model": model
     }
 
 def handle_update(request):
