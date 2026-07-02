@@ -60,19 +60,19 @@ def get_device_files_metadata(mpremote):
         )
         output = proc.stdout
     except subprocess.CalledProcessError as e:
-        print(f"Warning: Failed to query device filesystem metadata: {e.stderr or e}")
-        return {}
+        print(f"Error: Failed to query device filesystem metadata: {e.stderr or e.strip()}")
+        return None
 
     if '__JSON_START__' not in output or '__JSON_END__' not in output:
-        print("Warning: Could not parse device metadata response.")
-        return {}
+        print("Error: Could not parse device metadata response.")
+        return None
         
     json_str = output.split('__JSON_START__')[1].split('__JSON_END__')[0].strip()
     try:
         return json.loads(json_str)
     except Exception as e:
-        print(f"Warning: Error decoding device files JSON: {e}")
-        return {}
+        print(f"Error: Error decoding device files JSON: {e}")
+        return None
 
 def main():
     # Resolve project root (parent of utils) and mpremote path
@@ -87,6 +87,9 @@ def main():
     # --- 1. Query Device Files for Sync & Cleanup ---
     print("Scanning ESP32 device filesystem...")
     device_files = get_device_files_metadata(mpremote)
+    if device_files is None:
+        print("[ERROR] Device connection failed. Aborting sync.")
+        sys.exit(1)
     
     # Compile the set of local files we expect to find on the device
     expected_files = {}
@@ -163,7 +166,7 @@ def main():
             print(f" - Copying: {rel_path} (out of sync)...")
             # If copying a lib file, use correct target path
             target_path = f":{rel_path}"
-            subprocess.run([mpremote, 'connect', 'COM3', 'fs', 'cp', local_abs_path, target_path])
+            subprocess.run([mpremote, 'connect', 'COM3', 'fs', 'cp', local_abs_path, target_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             sync_count += 1
 
     print(f"\nESP32 sync complete! Synced: {sync_count} files, Skipped: {skip_count} files.")
