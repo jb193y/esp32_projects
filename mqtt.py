@@ -15,6 +15,7 @@ from ota import ota_update, fetch_manifest
 
 # --- Global Control Flags ---
 _pending_ota_cmd = None
+is_connected = False
 
 def ensure_network_ready():
     sta = network.WLAN(network.STA_IF)
@@ -239,6 +240,9 @@ def mqtt_thread(heartbeats=None):
             client.subscribe(cmd_topic)
             client.subscribe(broadcast_cmd_topic)
             
+            global is_connected
+            is_connected = True
+            
             publish_status(client, "online", "Pump controller online")
             publish_version_announcement(client)
             print("✅ MQTT Connected to %s" % server)
@@ -315,6 +319,8 @@ def mqtt_thread(heartbeats=None):
                 time.sleep(0.5)
 
         except Exception as e:
+            global is_connected
+            is_connected = False
             print(f"⚠️ MQTT Link Lost: {e}. Retrying in 5s...")
             led_status.set_status("WIFI_CONNECTED")
             if heartbeats:

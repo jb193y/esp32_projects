@@ -178,15 +178,15 @@ def draw_dashboard():
     ap_if = network.WLAN(network.AP_IF)
     
     if sta_if.isconnected():
-        wifi_status = "STA: OK"
+        wifi_status = "STA"
         wifi_color = GREEN
         ip_addr = sta_if.ifconfig()[0]
     elif ap_if.active():
-        wifi_status = "AP ACTIVE"
+        wifi_status = "AP"
         wifi_color = CYAN
         ip_addr = ap_if.ifconfig()[0]
     else:
-        wifi_status = "DISCONNECTED"
+        wifi_status = "DISC"
         wifi_color = RED
         ip_addr = "0.0.0.0"
 
@@ -244,10 +244,21 @@ def draw_dashboard():
     tft.text(f"EST_KWH: {kwh}", 10, 145, WHITE, BLACK)
     tft.text(f"RUN: {hrs} HRS", 180, 145, WHITE, BLACK)
     
-    # Row 7 (Y=170): WiFi & IP configurations
+    # Query MQTT connection status
+    try:
+        import mqtt
+        mqtt_ok = mqtt.is_connected
+    except:
+        mqtt_ok = False
+        
+    mqtt_status = "CONN" if mqtt_ok else "DISC"
+    mqtt_color = GREEN if mqtt_ok else RED
+
+    # Row 7 (Y=170): WiFi, MQTT & IP configurations
     tft.fill_rect(0, 170, 320, 25, BLACK) # Clear telemetry area 5
-    tft.text(f"WIFI: {wifi_status}", 10, 170, wifi_color, BLACK)
-    tft.text(f"IP: {ip_addr}", 180, 170, WHITE, BLACK)
+    tft.text(f"WIFI:{wifi_status}", 10, 170, wifi_color, BLACK)
+    tft.text(f"MQTT:{mqtt_status}", 105, 170, mqtt_color, BLACK)
+    tft.text(f"IP:{ip_addr}", 195, 170, WHITE, BLACK)
     
     # 4. Footer Fault Area (Y=200 to 240)
     tft.fill_rect(0, 195, 320, 45, BLACK) # Clear footer
