@@ -339,10 +339,13 @@ def pump_command(cmd, val=None):
         return True
         
     elif cmd == "SET_MODE":
-        if val in ["MANUAL", "AUTO", "MAINTENANCE"]:
-            cfg.setdefault("pump", {})["mode"] = val
+        if val in ["MANUAL", "AUTO", "MAINTENANCE", "SCHEDULED", "SCHEDULE"]:
+            val_to_save = "SCHEDULED" if val in ["SCHEDULE", "SCHEDULED"] else val
+            cfg.setdefault("pump", {})["mode"] = val_to_save
             config.save_config(cfg)
-            log_event("MODE_CHANGE", val)
+            log_event("MODE_CHANGE", val_to_save)
+            if val_to_save == "MAINTENANCE":
+                set_state("OFF", "Maintenance mode active")
             return True
             
     elif cmd == "CLEAR_FAULT":

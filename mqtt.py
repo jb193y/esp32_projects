@@ -98,6 +98,36 @@ def publish_alert(client, event_type, message):
 def handle_command(payload):
     """Parses standard commands."""
     print("📥 Command processing:", payload)
+    
+    # 1. Parse unified state command format if present
+    if "state" in payload:
+        state_data = payload["state"]
+        print("🛠️ Parsing unified state command payload:", state_data)
+        
+        # Handle Maintenance
+        if "maintenance" in state_data:
+            is_maint = state_data["maintenance"]
+            pump_controller.pump_command("SET_MODE", "MAINTENANCE" if is_maint else "MANUAL")
+            
+        # Handle Mode (Only if not maintenance active)
+        if "mode" in state_data:
+            mode_val = state_data["mode"]
+            val = "AUTO" if mode_val == "AUTO" else ("SCHEDULED" if mode_val in ["SCHEDULED", "SCHEDULE"] else "MANUAL")
+            cfg = config.load_config()
+            curr_mode = cfg.get("pump", {}).get("mode", "MANUAL")
+            if curr_mode != "MAINTENANCE" and state_data.get("maintenance") != True:
+                pump_controller.pump_command("SET_MODE", val)
+                
+        # Handle Pump status trigger
+        if "pump" in state_data:
+            pump_val = state_data["pump"]
+            cfg = config.load_config()
+            curr_mode = cfg.get("pump", {}).get("mode", "MANUAL")
+            if curr_mode != "MAINTENANCE":
+                pump_controller.pump_command("PUMP_ON" if pump_val == "ON" else "PUMP_OFF")
+        return
+
+    # 2. Legacy fallback command format
     command = payload.get("command")
     val = payload.get("val")
     cfg = config.load_config()
