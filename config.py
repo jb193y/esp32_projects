@@ -8,6 +8,8 @@ import os
 CONFIG_FILE = "config.json"
 DEFAULT_FILE = "config.defaults.json"
 
+_cached_config = None
+
 MIN_VALID_EPOCH = 1700000000  # ~2023 sanity check
 
 
@@ -58,6 +60,10 @@ def load_config():
     Loads config.json (user/runtime) and merges config.defaults.json into it (fill missing only).
     If config.json is missing/corrupt, it will be created from defaults.
     """
+    global _cached_config
+    if _cached_config is not None:
+        return _cached_config
+
     defaults = load_defaults()
 
     cfg = {}
@@ -79,10 +85,13 @@ def load_config():
     except Exception:
         pass
 
+    _cached_config = cfg
     return cfg
 
 
 def save_config(cfg):
+    global _cached_config
+    _cached_config = cfg
     _write_json(CONFIG_FILE, cfg)
 
 

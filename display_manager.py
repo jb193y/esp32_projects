@@ -5,6 +5,7 @@ import _thread
 import network
 import pump_controller
 import config
+import gc
 
 # Color Definitions (RGB565)
 BLACK    = 0x0000
@@ -147,6 +148,7 @@ def draw_ota_screen(status):
     tft.text("DEVICE WILL REBOOT ON COMPLETE", 10, 212, GREEN, BLACK)
 
 def draw_dashboard():
+    gc.collect()
     if tft is None:
         return
         
@@ -304,6 +306,7 @@ def display_thread(heartbeats=None):
             draw_dashboard()
         except Exception as e:
             print("🚨 draw_dashboard failed:", e)
+        gc.collect()
         time.sleep(1)
         
     print("📺 Display status refresh thread stopped.")

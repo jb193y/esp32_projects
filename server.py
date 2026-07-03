@@ -127,7 +127,7 @@ def handle_info():
     return {
         "device_id": device_id,
         "device_type": device_type,
-        "default_name": f"Agripulse {device_type.capitalize()} Controller",
+        "default_name": f"Agripulse {device_type[0].upper() + device_type[1:]} Controller",
         "mac": mac_str,
         "serial_number": serial_number,
         "sn": serial_number,
@@ -255,7 +255,7 @@ def handle_provision(request):
     
 def send_options_response(conn):
     """Send CORS headers for preflight request."""
-    conn.send(
+    conn.sendall(
         "HTTP/1.1 204 No Content\r\n"
         "Access-Control-Allow-Origin: *\r\n"
         "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
@@ -266,11 +266,11 @@ def send_options_response(conn):
 
 def send_json(conn, obj):
     payload = ujson.dumps(obj)
-    conn.send(
+    response = (
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: application/json\r\n"
         "Access-Control-Allow-Origin: *\r\n"
         "Content-Length: %d\r\n"
         "\r\n" % len(payload)
-    )
-    conn.send(payload)
+    ) + payload
+    conn.sendall(response)
