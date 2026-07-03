@@ -141,9 +141,9 @@ def main():
             subprocess.run([mpremote, 'connect', 'COM3', 'fs', 'mkdir', ':lib'], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
     
     # --- 4. Delta Sync Files ---
-    print("\nSynchronizing out-of-sync files to ESP32...")
-    sync_count = 0
-    skip_count = 0
+    print("\nChecking file sync status...")
+    up_to_date_files = []
+    out_of_sync_files = []
     
     for rel_path, local_abs_path in sorted(expected_files.items()):
         # Calculate local file metadata
@@ -158,18 +158,25 @@ def main():
                 is_synced = True
                 
         if is_synced:
-            # File matches, skip copying
-            print(f" - Up to date: {rel_path}")
-            skip_count += 1
+            up_to_date_files.append(rel_path)
         else:
-            # File is out of sync or missing, copy it
+            out_of_sync_files.append((rel_path, local_abs_path))
+
+    # Print up-to-date files first
+    if up_to_date_files:
+        print("\nUp-to-date files (skipped):")
+        for rel_path in up_to_date_files:
+            print(f" - Up to date: {rel_path}")
+            
+    # Print and copy out-of-sync files
+    if out_of_sync_files:
+        print("\nSynchronizing out-of-sync files to ESP32...")
+        for rel_path, local_abs_path in out_of_sync_files:
             print(f" - Copying: {rel_path} (out of sync)...")
-            # If copying a lib file, use correct target path
             target_path = f":{rel_path}"
             subprocess.run([mpremote, 'connect', 'COM3', 'fs', 'cp', local_abs_path, target_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            sync_count += 1
 
-    print(f"\nESP32 sync complete! Synced: {sync_count} files, Skipped: {skip_count} files.")
+    print(f"\nESP32 sync complete! Synced: {len(out_of_sync_files)} files, Skipped: {len(up_to_date_files)} files.")
 
 if __name__ == '__main__':
     main()
