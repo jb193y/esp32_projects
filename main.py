@@ -33,7 +33,7 @@ def monitor_threads():
 
 print("🚀 main.py started - Submersible Pump Controller")
 
-# Check setup button on boot for pairing override
+# Check setup button on boot for pairing override or factory reset
 forced_ap_mode = False
 try:
     # Load config to get the setup button pin (default to 0 / BOOT button)
@@ -45,16 +45,47 @@ try:
     
     # If button is pressed (value is 0) on boot
     if btn_setup.value() == 0:
-        print("⏳ Checking Setup Button Boot Override (hold for 3s)...")
+        print("⏳ Checking Setup Button Boot Override...")
         held_count = 0
-        # Wait up to 3 seconds (30 * 100ms)
-        while btn_setup.value() == 0 and held_count < 30:
+        # Wait up to 10 seconds (100 * 100ms)
+        while btn_setup.value() == 0 and held_count < 100:
             time.sleep_ms(100)
             held_count += 1
+            if held_count % 10 == 0:
+                sec = held_count // 10
+                if sec >= 10:
+                    print("🚨 Hold button... %ds (FACTORY RESET TRIGGERED!)" % sec)
+                elif sec >= 3:
+                    print("⏳ Hold button... %ds (AP setup override active)" % sec)
+                else:
+                    print("⏳ Hold button... %ds" % sec)
             
-        if held_count >= 30:
+        if held_count >= 100:
+            print("🚨 FACTORY RESET ACTIVE: Wiping config.json and rebooting...")
+            import os
+            try:
+                os.remove("config.json")
+                print("✅ User configuration wiped!")
+            except Exception as e:
+                print("⚠️ config.json removal error (it may already be empty):", e)
+                
+            # Sound the buzzer for 2 seconds to confirm the factory reset
+            try:
+                buzzer_pin_num = boot_cfg.get("pump", {}).get("pins", {}).get("buzzer", 21)
+                buzzer = machine.Pin(buzzer_pin_num, machine.Pin.OUT)
+                buzzer.value(1)
+                time.sleep(2.0)
+                buzzer.value(0)
+            except Exception:
+                pass
+                
+            time.sleep(0.5)
+            machine.reset()
+        elif held_count >= 30:
             print("🚀 SETUP OVERRIDE ACTIVE: Forcing Access Point Setup Mode!")
             forced_ap_mode = True
+        else:
+            print("ℹ️ Button released too early. Standard boot continues.")
 except Exception as e:
     print("⚠️ Setup button boot-check error:", e)
 

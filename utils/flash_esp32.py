@@ -60,7 +60,7 @@ def get_device_files_metadata(mpremote):
         )
         output = proc.stdout
     except subprocess.CalledProcessError as e:
-        print(f"Error: Failed to query device filesystem metadata: {e.stderr or e.strip()}")
+        print(f"Error: Failed to query device filesystem metadata: {e.stderr or str(e)}")
         return None
 
     if '__JSON_START__' not in output or '__JSON_END__' not in output:

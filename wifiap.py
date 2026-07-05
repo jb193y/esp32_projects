@@ -56,10 +56,10 @@ def start_ap_mode():
     time.sleep(0.1)
 
     ap = network.WLAN(network.AP_IF)
-    ap.active(False)       # Deactivate first to reset DHCP daemon state
-    time.sleep(0.2)
+    ap.active(True)        # Activate first to prevent Wifi Invalid Mode OSError
+    time.sleep(0.5)
 
-    # Configure SSID & Security BEFORE activating the AP interface
+    # Configure SSID & Security AFTER activating the AP interface
     if len(password) >= 8:
         ap.config(essid=ssid, password=password, authmode=3)
     else:
@@ -67,9 +67,6 @@ def start_ap_mode():
 
     # Set explicit Gateway IP configuration to ensure DHCP leases match
     ap.ifconfig(('192.168.4.1', '255.255.255.0', '192.168.4.1', '8.8.8.8'))
-    
-    # Finally activate
-    ap.active(True)
     time.sleep(0.5)
 
     print("📡 AP started:", ap.ifconfig())
