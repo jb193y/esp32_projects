@@ -4,6 +4,7 @@ import time
 import ujson
 import network
 import machine
+import _thread
 import gc
 from umqtt.simple import MQTTClient
 
