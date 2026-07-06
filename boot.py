@@ -28,10 +28,6 @@ if mode == "sta":
         print("Wi-Fi failed → entering AP setup mode")
         led_status.set_status("AP_MODE")
         wifiap.start_ap_mode()
-
-        print("Starting setup server")
-        import server
-        server.start_server()
     else:
         # Successfully connected to Wi-Fi
         led_status.set_status("WIFI_CONNECTED")
@@ -45,9 +41,5 @@ else:
     print("AP mode selected")
     led_status.set_status("AP_MODE")
     wifiap.start_ap_mode()
-
-    print("Starting setup server")
-    import server
-    server.start_server()
 
 print(">>> boot.py COMPLETED <<<")

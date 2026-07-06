@@ -6,19 +6,16 @@ import math
 import struct
 from lib.micropyGPS import MicropyGPS
 import config
-from imu import is_moving, imu_accel_vector  # kept as in your current file
 
 # -----------------------------
 # LOAD CONFIG
 # -----------------------------
 cfg = config.load_config()
-
 client_cfg = cfg.get("client", {})
 gps_cfg = cfg.get("gps", {})
-
 CLIENT_TYPE = client_cfg.get("type", "rover")  # "rover" or "base"
 
-# base-only (validated/used only when base)
+# base-only
 base_cfg = cfg.get("base", {})
 KNOWN_LAT = base_cfg.get("known_lat")
 KNOWN_LON = base_cfg.get("known_lon")
@@ -34,19 +31,13 @@ GPS_RX = gps_cfg.get("rx", 16)
 # -----------------------------
 # GPS Processing Settings
 # -----------------------------
-HDOP_MAX = gps_cfg.get("hdop_max", 3.0)                 # accept fixes only if hdop <= this (set 99 to disable)
+HDOP_MAX = gps_cfg.get("hdop_max", 3.0)                 # accept fixes only if hdop <= this
 AVG_BUF = gps_cfg.get("avg_buf", 8)                     # moving average window
 KALMAN_Q = gps_cfg.get("kf_q", 1e-6)                    # process noise
 KALMAN_R = gps_cfg.get("kf_r", 1e-4)                    # measurement noise
 STATIONARY_SPEED_KMH = gps_cfg.get("stationary_speed_kmh", 0.8)
 STATIONARY_METERS = gps_cfg.get("stationary_meters", 2.0)
 STATIONARY_COUNT_LOCK = gps_cfg.get("stationary_count_lock", 6)
-
-# -----------------------------
-# UART + GPS Parser
-# -----------------------------
-gps_uart = machine.UART(GPS_UART_ID, baudrate=GPS_BAUD, tx=GPS_TX, rx=GPS_RX)
-gps = MicropyGPS(location_formatting='dd')  # dd => [decimal, 'N'] / [decimal, 'W']
 
 # Shared state for other threads
 gps_data = {
@@ -64,6 +55,21 @@ gps_raw_data = {
     "nmea_sentences": [],
 }
 lock = _thread.allocate_lock()
+
+gps_uart = None
+gps = None
+
+def init_gps():
+    """Safety-wrapped UART initialization to prevent boot crashes."""
+    global gps_uart, gps
+    print(f"📡 Initializing GPS UART {GPS_UART_ID} (TX: {GPS_TX}, RX: {GPS_RX}, Baud: {GPS_BAUD})")
+    try:
+        gps_uart = machine.UART(GPS_UART_ID, baudrate=GPS_BAUD, tx=GPS_TX, rx=GPS_RX)
+        gps = MicropyGPS(location_formatting='dd')  # dd => decimal degrees
+        return True
+    except Exception as e:
+        print("🚨 GPS Hardware init failed:", e)
+        return False
 
 # -----------------------------
 # Helpers
@@ -131,15 +137,6 @@ class Kalman1D:
         self.p = (1 - k) * self.p
         return self.x
 
-def compute_correction(measured_lat, measured_lon, known_lat, known_lon):
-    return {
-        "delta_lat": known_lat - measured_lat,
-        "delta_lon": known_lon - measured_lon
-    }
-
-# -----------------------------
-# UBX Configuration Helpers
-# -----------------------------
 def calc_checksum(payload):
     ck_a, ck_b = 0, 0
     for b in payload:
@@ -149,7 +146,7 @@ def calc_checksum(payload):
 
 def send_ubx(cls, msg_id, payload):
     """Sends a UBX message to the GPS module."""
-    # Frame: [Sync1][Sync2][Class][ID][Len][Payload][CK_A][CK_B]
+    if gps_uart is None: return
     length = len(payload)
     content = struct.pack("<BBH", cls, msg_id, length) + payload
     ck_a, ck_b = calc_checksum(content)
@@ -157,11 +154,10 @@ def send_ubx(cls, msg_id, payload):
     gps_uart.write(packet)
 
 def configure_gps_module():
+    if gps_uart is None: return
     print("⚙️ Configuring GPS Module (UBX)...")
     
     # 1. Dynamic Model & Min Elevation (CFG-NAV5)
-    # -------------------------------------------
-    # Determine Model
     model_cfg = gps_cfg.get("dynamic_model", "").lower()
     if "stationary" in model_cfg:
         dyn_model = 2
@@ -170,16 +166,13 @@ def configure_gps_module():
     elif "pedestrian" in model_cfg:
         dyn_model = 3
     else:
-        # Default based on Client Type
-        dyn_model = 2 if CLIENT_TYPE == "base" else 3 # Pedestrian for rover default
+        dyn_model = 2 if CLIENT_TYPE == "base" else 3
     
     min_elev = int(gps_cfg.get("min_elevation", 15))
     
     print(f"   - Dynamic Model: {dyn_model} (2=Stat, 3=Ped, 4=Auto)")
     print(f"   - Min Elevation: {min_elev}°")
 
-    # Payload for CFG-NAV5 (36 bytes)
-    # Mask: 0x0003 (Apply DynModel and MinEl settings)
     payload = struct.pack("<HBBiiBbHHHHBBBBHHB5s", 
         0x0003,      # mask
         dyn_model,   # dynModel
@@ -199,23 +192,27 @@ def configure_gps_module():
     time.sleep(0.1)
 
     # 2. Update Rate (CFG-RATE)
-    # -------------------------
     rate_hz = int(gps_cfg.get("update_rate_hz", 1))
-    if rate_hz > 5: rate_hz = 5 # Limit to 5Hz for stability
+    if rate_hz > 5: rate_hz = 5
     if rate_hz < 1: rate_hz = 1
     
     meas_rate = 1000 // rate_hz
     print(f"   - Update Rate: {rate_hz}Hz ({meas_rate}ms)")
     
-    # measRate(2), navRate(2), timeRef(2)
-    payload = struct.pack("<HHH", meas_rate, 1, 1) # 1 = GPS Time
+    payload = struct.pack("<HHH", meas_rate, 1, 1)
     send_ubx(0x06, 0x08, payload)
     time.sleep(0.1)
 
 # -----------------------------
 # GPS Thread
 # -----------------------------
-def gps_thread(heartbeats=None): # Add 'heartbeats=None' here
+def gps_thread(heartbeats=None):
+    if not init_gps():
+        if heartbeats and "gps" in heartbeats:
+            del heartbeats["gps"]
+        print("⚠️ GPS thread exiting due to hardware initialization failure.")
+        return
+
     lat_buf, lon_buf = [], []
     k_lat = Kalman1D()
     k_lon = Kalman1D()
@@ -223,18 +220,11 @@ def gps_thread(heartbeats=None): # Add 'heartbeats=None' here
     last_filtered = {"lat": None, "lon": None}
     stationary_count = 0
     locked_pos = {"lat": None, "lon": None}
-
     last_fix_process = time.time()
     
-    # NMEA sentence capture
     nmea_buffer = ""
 
-    # Validation (base must have known coords)
-    if CLIENT_TYPE == "base":
-        if KNOWN_LAT is None or KNOWN_LON is None:
-            print("⚠️ BASE mode but base.known_lat/known_lon missing — corrections will not work.")
-
-    print("✅ GPS thread started")
+    print("✅ GPS thread started successfully")
     configure_gps_module()
 
     def smooth(buf, v):
@@ -246,12 +236,15 @@ def gps_thread(heartbeats=None): # Add 'heartbeats=None' here
     while True:
         if heartbeats:
             heartbeats["gps"] = time.time() # This feeds the Watchdog
-        while gps_uart.any():
-            try:
-                c = gps_uart.read(1)
-                if c:
-                    char = c.decode("utf-8", "ignore")
+            
+        # Fast block read to prevent buffer overflows and reduce CPU overhead
+        if gps_uart.any():
+            data = gps_uart.read()
+            if data:
+                for b in data:
+                    char = chr(b)
                     gps.update(char)
+                    
                     # Capture raw NMEA sentence
                     if char == '\r':
                         continue
@@ -260,7 +253,6 @@ def gps_thread(heartbeats=None): # Add 'heartbeats=None' here
                             lock.acquire()
                             try:
                                 gps_raw_data["nmea_sentences"].append(nmea_buffer)
-                                # Keep only last 20 sentences
                                 if len(gps_raw_data["nmea_sentences"]) > 20:
                                     gps_raw_data["nmea_sentences"].pop(0)
                                 gps_raw_data["timestamp"] = iso_timestamp()
@@ -269,8 +261,6 @@ def gps_thread(heartbeats=None): # Add 'heartbeats=None' here
                         nmea_buffer = ""
                     else:
                         nmea_buffer += char
-            except:
-                pass
 
         now = time.time()
         if now - last_fix_process >= 1:
@@ -287,7 +277,7 @@ def gps_thread(heartbeats=None): # Add 'heartbeats=None' here
                 time.sleep(0.02)
                 continue
 
-            # Hemisphere
+            # Hemisphere conversion
             if gps.latitude[1] == "S":
                 lat = -lat
             if gps.longitude[1] == "W":

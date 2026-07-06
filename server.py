@@ -6,8 +6,9 @@ import network
 import time
 import machine
 import _thread
+import ubinascii
 
-ALLOWED_SECTIONS = {"wifi", "mqtt", "gps", "client", "time", "ota", "server", "imu", "base"}
+ALLOWED_SECTIONS = {"wifi", "mqtt", "gps", "client", "time", "ota", "server", "pump", "display"}
 
 def reboot_response(msg):
     _start_delayed_reset()
@@ -25,27 +26,44 @@ def start_server():
     port = int(cfg.get("server", {}).get("port", 80))
 
     s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(("0.0.0.0", port))
     s.listen(1)
     print("📡 Setup server started on port", port)
 
     while True:
-        conn, addr = s.accept()
-        print("🔌 Connection from:", addr)
-
         try:
+            conn, addr = s.accept()
+            conn.settimeout(5.0)
+            
             request = conn.recv(4096).decode()
             if not request:
                 conn.close()
                 continue
 
-            method, path, *_ = request.split(" ", 2)
+            parts = request.split(" ", 2)
+            if len(parts) < 2:
+                conn.close()
+                continue
+            method, path = parts[0], parts[1]
             print("HTTP", method, path)
+
+            # Handle CORS OPTIONS Preflight
+            if method == "OPTIONS":
+                send_options_response(conn)
+                conn.close()
+                continue
 
             if method == "GET" and path == "/status":
                 response = handle_status()
+            elif method == "GET" and path == "/info":
+                response = handle_info()
             elif method == "POST" and path == "/update":
                 response = handle_update(request)
+            elif method == "POST" and (path == "/setup" or path == "/api/setup"):
+                response = handle_setup_post(request)
+            elif method == "POST" and path == "/provision":
+                response = handle_provision(request)
             else:
                 response = {"status": "error", "message": "Invalid endpoint"}
 
@@ -58,7 +76,10 @@ def start_server():
             except:
                 pass
         finally:
-            conn.close()
+            try:
+                conn.close()
+            except:
+                pass
 
 def handle_status():
     cfg = config.load_config()
@@ -74,19 +95,49 @@ def handle_status():
     return {
         "status": "ok",
         "client": cfg.get("client"),
-        "base": cfg.get("base"),
         "wifi": cfg.get("wifi"),
         "mqtt": cfg.get("mqtt"),
         "gps": cfg.get("gps"),
         "time": cfg.get("time"),
         "ota": cfg.get("ota"),
         "server": cfg.get("server"),
+        "pump": cfg.get("pump"),
+        "display": cfg.get("display"),
         "network": net_info
+    }
+
+def handle_info():
+    """Returns device identification details for the mobile app setup wizard."""
+    cfg = config.load_config()
+    client_cfg = cfg.get("client", {})
+    
+    # Get MAC Address
+    wlan = network.WLAN(network.STA_IF)
+    try:
+        mac_bytes = wlan.config('mac')
+        mac_str = ":".join(["%02x" % b for b in mac_bytes])
+    except:
+        mac_str = "00:00:00:00:00:00"
+        
+    device_id = client_cfg.get("id", "esp32_pump_01")
+    device_type = client_cfg.get("type", "pump")
+    serial_number = client_cfg.get("serial_number", "SN-UNKNOWN")
+    model = client_cfg.get("model", "MODEL-UNKNOWN")
+    
+    return {
+        "device_id": device_id,
+        "device_type": device_type,
+        "default_name": f"Agripulse {device_type[0].upper() + device_type[1:]} Controller",
+        "mac": mac_str,
+        "serial_number": serial_number,
+        "sn": serial_number,
+        "model": model
     }
 
 def handle_update(request):
     try:
-        body = request.split("\r\n\r\n", 1)[1]
+        parts = request.split("\r\n\r\n", 1)
+        body = parts[1] if len(parts) > 1 else ""
         data = ujson.loads(body)
     except Exception:
         return {"status": "error", "message": "Invalid JSON payload"}
@@ -106,25 +157,6 @@ def handle_update(request):
     if not patch:
         return {"status": "error", "message": "No valid config sections provided"}
 
-    # Validate: base.* only if resulting client.type == "base"
-    current = config.load_config()
-    current_client = current.get("client", {})
-    new_client = dict(current_client)
-    if "client" in patch:
-        new_client.update(patch["client"])
-
-    new_type = new_client.get("type", "rover")
-
-    if "base" in patch and new_type != "base":
-        return {"status": "error", "message": "base.* is only allowed when client.type == 'base'"}
-
-    if new_type == "base":
-        # ensure known_lat/lon exist either already or in patch
-        base_now = dict(current.get("base", {}))
-        base_now.update(patch.get("base", {}))
-        if base_now.get("known_lat") is None or base_now.get("known_lon") is None:
-            return {"status": "error", "message": "client.type='base' requires base.known_lat and base.known_lon"}
-
     # Apply update
     cfg = config.update_config(patch)
 
@@ -134,35 +166,111 @@ def handle_update(request):
 
     return reboot_response("Config updated. Rebooting...")
 
-# firmware/server.py refinement
 def handle_setup_post(request):
     """
-    Endpoint: POST /api/setup
-    Payload: {"wifi_ssid": "...", "wifi_pass": "...", "mqtt_broker": "..."}
+    Legacy Endpoint: POST /api/setup
+    Payload: {"wifi_ssid": "...", "wifi_pass": "...", "mqtt_broker": "...", "client_id": "...", "pump_mode": "..."}
     """
     try:
-        body = request.split("\r\n\r\n", 1)[1]
+        parts = request.split("\r\n\r\n", 1)
+        body = parts[1] if len(parts) > 1 else ""
         data = ujson.loads(body)
         
-        # Structure the configuration update
-        config_patch = {
-            "wifi": {"networks": [{"ssid": data['wifi_ssid'], "password": data['wifi_pass']}]},
-            "mqtt": {"server": data['mqtt_broker']},
-            "client": {"mode": "sta"} # Force station mode for next boot
-        }
+        config_patch = {}
+        
+        # Configure WiFi
+        if 'wifi_ssid' in data:
+            ssid = data['wifi_ssid']
+            password = data.get('wifi_pass', '')
+            config_patch["wifi"] = {"networks": [{"ssid": ssid, "password": password}]}
+            
+        # Configure MQTT broker
+        if 'mqtt_broker' in data:
+            config_patch["mqtt"] = {"server": data['mqtt_broker']}
+            
+        # Configure client ID
+        if 'client_id' in data:
+            config_patch["client"] = {"id": data['client_id']}
+            
+        # Configure pump mode
+        if 'pump_mode' in data:
+            config_patch.setdefault("pump", {})["mode"] = data['pump_mode']
+            
+        if not config_patch:
+            return {"status": "error", "message": "No setup data provided"}
+
+        # Force station mode for next boot
+        config_patch.setdefault("client", {})["mode"] = "sta"
         
         # Save and trigger reboot
         config.update_config(config_patch)
-        return reboot_response("Provisioning complete. Rebooting to join home network...")
+        return reboot_response("Provisioning complete. Rebooting to client mode...")
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+def handle_provision(request):
+    """
+    Agripulse App Endpoint: POST /provision
+    Payload: {"ssid": "...", "password": "...", "mqtt_broker": "...", "mqtt_port": 1883, "mqtt_topic": "..."}
+    """
+    try:
+        parts = request.split("\r\n\r\n", 1)
+        body = parts[1] if len(parts) > 1 else ""
+        data = ujson.loads(body)
+        
+        config_patch = {}
+        
+        # WiFi configuration
+        if 'ssid' in data:
+            ssid = data['ssid']
+            password = data.get('password', '')
+            config_patch["wifi"] = {"networks": [{"ssid": ssid, "password": password}]}
+            
+        # MQTT Broker configuration
+        mqtt_update = {}
+        if 'mqtt_broker' in data:
+            mqtt_update["server"] = data['mqtt_broker']
+        if 'mqtt_port' in data:
+            mqtt_update["port"] = int(data['mqtt_port'])
+        if 'mqtt_topic' in data:
+            base_topic = data['mqtt_topic'].rstrip('/')
+            # Map the base topic to specific telemetry and command sub-topics
+            mqtt_update["publish_topic"] = f"{base_topic}/telemetry"
+            mqtt_update["command_topic"] = f"{base_topic}/command"
+            
+        if mqtt_update:
+            config_patch["mqtt"] = mqtt_update
+            
+        if not config_patch:
+            return {"status": "error", "message": "No configuration provided"}
+
+        # Force station mode for next boot to join the newly provisioned router network
+        config_patch.setdefault("client", {})["mode"] = "sta"
+        
+        # Save and trigger reboot
+        config.update_config(config_patch)
+        return reboot_response("Provisioning complete. Rebooting to client mode...")
     except Exception as e:
         return {"status": "error", "message": str(e)}
     
+def send_options_response(conn):
+    """Send CORS headers for preflight request."""
+    conn.sendall(
+        "HTTP/1.1 204 No Content\r\n"
+        "Access-Control-Allow-Origin: *\r\n"
+        "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+        "Access-Control-Allow-Headers: Content-Type\r\n"
+        "Content-Length: 0\r\n"
+        "\r\n"
+    )
+
 def send_json(conn, obj):
     payload = ujson.dumps(obj)
-    conn.send(
+    response = (
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: application/json\r\n"
+        "Access-Control-Allow-Origin: *\r\n"
         "Content-Length: %d\r\n"
         "\r\n" % len(payload)
-    )
-    conn.send(payload)
+    ) + payload
+    conn.sendall(response)
