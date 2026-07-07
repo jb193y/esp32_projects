@@ -47,20 +47,37 @@ try:
     if btn_setup.value() == 0:
         print("⏳ Checking Setup Button Boot Override...")
         held_count = 0
-        # Wait up to 10 seconds (100 * 100ms)
-        while btn_setup.value() == 0 and held_count < 100:
+        
+        # Load LED run pin for feedback
+        led_pin_num = boot_cfg.get("pump", {}).get("pins", {}).get("led_run", 2)
+        led = machine.Pin(led_pin_num, machine.Pin.OUT)
+        
+        # Wait up to 5 seconds (50 * 100ms)
+        while btn_setup.value() == 0 and held_count < 50:
             time.sleep_ms(100)
             held_count += 1
+            
+            # LED blinking feedback:
+            if held_count >= 20:
+                # AP setup override is ready -> blink fast
+                led.value(held_count % 2 == 0)
+            else:
+                # Standard counting -> blink slow
+                led.value(held_count % 4 == 0)
+                
             if held_count % 10 == 0:
                 sec = held_count // 10
-                if sec >= 10:
+                if sec >= 5:
                     print("🚨 Hold button... %ds (FACTORY RESET TRIGGERED!)" % sec)
-                elif sec >= 3:
+                elif sec >= 2:
                     print("⏳ Hold button... %ds (AP setup override active)" % sec)
                 else:
                     print("⏳ Hold button... %ds" % sec)
             
-        if held_count >= 100:
+        # Ensure LED is turned off after loop
+        led.value(0)
+            
+        if held_count >= 50:
             print("🚨 FACTORY RESET ACTIVE: Wiping config.json and rebooting...")
             import os
             try:
@@ -69,21 +86,34 @@ try:
             except Exception as e:
                 print("⚠️ config.json removal error (it may already be empty):", e)
                 
-            # Sound the buzzer for 2 seconds to confirm the factory reset
+            # Sound the buzzer and blink the LED very rapidly for 2 seconds
             try:
                 buzzer_pin_num = boot_cfg.get("pump", {}).get("pins", {}).get("buzzer", 21)
                 buzzer = machine.Pin(buzzer_pin_num, machine.Pin.OUT)
-                buzzer.value(1)
-                time.sleep(2.0)
-                buzzer.value(0)
+                
+                # Rapid feedback sequence (20 cycles of 100ms = 2 seconds)
+                for _ in range(20):
+                    led.value(1)
+                    buzzer.value(1)
+                    time.sleep_ms(50)
+                    led.value(0)
+                    buzzer.value(0)
+                    time.sleep_ms(50)
             except Exception:
                 pass
                 
             time.sleep(0.5)
             machine.reset()
-        elif held_count >= 30:
+        elif held_count >= 20:
             print("🚀 SETUP OVERRIDE ACTIVE: Forcing Access Point Setup Mode!")
             forced_ap_mode = True
+            
+            # Flash LED at medium speed for 1 second to confirm soft reset activation
+            for _ in range(5):
+                led.value(1)
+                time.sleep_ms(100)
+                led.value(0)
+                time.sleep_ms(100)
         else:
             print("ℹ️ Button released too early. Standard boot continues.")
 except Exception as e:
