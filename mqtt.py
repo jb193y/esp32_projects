@@ -98,6 +98,7 @@ def publish_alert(client, event_type, message):
 def handle_command(payload):
     """Parses standard commands."""
     print("📥 Command processing:", payload)
+    operator = payload.get("user", "Unknown")
     
     # 1. Parse unified state command format if present
     if "state" in payload:
@@ -107,7 +108,7 @@ def handle_command(payload):
         # Handle Maintenance
         if "maintenance" in state_data:
             is_maint = state_data["maintenance"]
-            pump_controller.pump_command("SET_MODE", "MAINTENANCE" if is_maint else "MANUAL")
+            pump_controller.pump_command("SET_MODE", "MAINTENANCE" if is_maint else "MANUAL", operator=operator)
             
         # Handle Mode (Only if not maintenance active)
         if "mode" in state_data:
@@ -116,7 +117,7 @@ def handle_command(payload):
             cfg = config.load_config()
             curr_mode = cfg.get("pump", {}).get("mode", "MANUAL")
             if curr_mode != "MAINTENANCE" and state_data.get("maintenance") != True:
-                pump_controller.pump_command("SET_MODE", val)
+                pump_controller.pump_command("SET_MODE", val, operator=operator)
                 
         # Handle Pump status trigger
         if "pump" in state_data:
@@ -124,7 +125,7 @@ def handle_command(payload):
             cfg = config.load_config()
             curr_mode = cfg.get("pump", {}).get("mode", "MANUAL")
             if curr_mode != "MAINTENANCE":
-                pump_controller.pump_command("PUMP_ON" if pump_val == "ON" else "PUMP_OFF")
+                pump_controller.pump_command("PUMP_ON" if pump_val == "ON" else "PUMP_OFF", operator=operator)
         return
 
     # 2. Legacy fallback command format
@@ -139,7 +140,7 @@ def handle_command(payload):
     elif command in ["PUMP_ON", "PUMP_OFF", "SET_MODE", "CLEAR_FAULT", 
                      "SIM_VOLTAGE", "SIM_CURRENT", "SIM_ESTOP", "SIM_FLOW", "SIM_TANK"]:
         # Relay directly to pump controller
-        pump_controller.pump_command(command, val)
+        pump_controller.pump_command(command, val, operator=operator)
         
     elif command == "SET_PUBLISH":
         cfg.setdefault("mqtt", {})["publish_every_sec"] = int(val)
@@ -294,12 +295,15 @@ def mqtt_thread(heartbeats=None):
                 # Immediate State change alert detection
                 current_state = pump_controller.state
                 if current_state != last_state:
-                    event_msg = f"Pump switched from {last_state} to {current_state}"
+                    op = pump_controller.last_operator
+                    op_str = f" by {op}" if op else ""
+                    event_msg = f"Pump switched from {last_state} to {current_state}{op_str}"
                     if current_state == "TRIPPED":
                         publish_alert(client, "TRIP_FAULT", f"Pump tripped: {', '.join(pump_controller.active_faults)}")
                     else:
                         publish_alert(client, "STATE_CHANGE", event_msg)
                     last_state = current_state
+                    pump_controller.last_operator = ""
                 
                 # Publish periodic telemetry
                 if now - last_pub_time >= PUBLISH_EVERY_SEC:

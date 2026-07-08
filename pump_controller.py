@@ -16,6 +16,7 @@ telemetry = {}                 # Latest sensor readings
 last_start_time = 0
 start_count_hour = 0
 start_timestamps = []          # List of start epoch timestamps
+last_operator = ""             # Stores username of last pump operation
 
 # Statistics
 runtime_sec = 0
@@ -189,7 +190,8 @@ def read_sensors():
             "tank_low": tank_low,
             "tank_high": tank_high,
             "tank_level_str": "HIGH" if tank_high else "LOW" if tank_low else "MID",
-            "mode": pump_cfg.get("mode", "MANUAL")
+            "mode": pump_cfg.get("mode", "MANUAL"),
+            "maintenance_locked_by": pump_cfg.get("maintenance_locked_by", "")
         }
     finally:
         lock.release()
@@ -221,13 +223,14 @@ def log_fault(fault_type, desc):
         print("❌ Log fault failed:", e)
 
 # --- State Machine Transitions ---
-def set_state(new_state, reason=""):
+def set_state(new_state, reason="", operator=None):
     global state, last_start_time
     if state == new_state:
         return
     
     print(f"🔄 State change: {state} ➔ {new_state} (Reason: {reason})")
-    log_event("STATE_CHANGE", f"{state} to {new_state} due to {reason}")
+    op_str = f" by {operator}" if operator else ""
+    log_event("STATE_CHANGE", f"{state} to {new_state} due to {reason}{op_str}")
     
     state = new_state
     
@@ -304,9 +307,10 @@ def check_protections():
     return len(faults) > 0
 
 # --- Command Handler ---
-def pump_command(cmd, val=None):
-    global sim_voltage_err, sim_current_err, sim_estop, sim_flow, sim_tank_level
-    print(f"📥 Pump Command Received: {cmd} = {val}")
+def pump_command(cmd, val=None, operator=None):
+    global sim_voltage_err, sim_current_err, sim_estop, sim_flow, sim_tank_level, last_operator
+    last_operator = operator or ""
+    print(f"📥 Pump Command Received: {cmd} = {val} (Operator: {operator})")
     
     cfg = config.load_config()
     
@@ -331,27 +335,42 @@ def pump_command(cmd, val=None):
             return False
             
         start_timestamps.append(now)
-        set_state("STARTING", "Command ON")
+        set_state("STARTING", "Command ON", operator=operator)
         return True
         
     elif cmd == "PUMP_OFF":
-        set_state("OFF", "Command OFF")
+        set_state("OFF", "Command OFF", operator=operator)
         return True
         
     elif cmd == "SET_MODE":
         if val in ["MANUAL", "AUTO", "MAINTENANCE", "SCHEDULED", "SCHEDULE"]:
             val_to_save = "SCHEDULED" if val in ["SCHEDULE", "SCHEDULED"] else val
+            curr_mode = cfg.get("pump", {}).get("mode", "MANUAL")
+            
+            # Unlock logic check
+            if curr_mode == "MAINTENANCE" and val_to_save != "MAINTENANCE":
+                locked_by = cfg.get("pump", {}).get("maintenance_locked_by", "")
+                if locked_by and locked_by != "":
+                    if operator and operator != locked_by:
+                        print(f"🚨 Unlock rejected: Locked by {locked_by}, attempted by {operator}")
+                        return False
+                cfg.setdefault("pump", {})["maintenance_locked_by"] = ""
+            
+            # Lock logic
+            if val_to_save == "MAINTENANCE":
+                cfg.setdefault("pump", {})["maintenance_locked_by"] = operator or "Unknown User"
+                
             cfg.setdefault("pump", {})["mode"] = val_to_save
             config.save_config(cfg)
-            log_event("MODE_CHANGE", val_to_save)
+            log_event("MODE_CHANGE", f"{val_to_save} by {operator or 'System'}")
             if val_to_save == "MAINTENANCE":
-                set_state("OFF", "Maintenance mode active")
+                set_state("OFF", "Maintenance mode active", operator=operator)
             return True
-            
+        
     elif cmd == "CLEAR_FAULT":
         if state == "TRIPPED":
             print("🧹 Clearing active faults.")
-            set_state("OFF", "Fault reset")
+            set_state("OFF", "Fault reset", operator=operator)
             return True
             
     # Simulation Commands for verification
