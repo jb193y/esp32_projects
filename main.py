@@ -105,7 +105,7 @@ try:
             time.sleep(0.5)
             machine.reset()
         elif held_count >= 20:
-            print("🚀 SETUP OVERRIDE ACTIVE: Forcing Access Point Setup Mode!")
+            print("🚀 SETUP OVERRIDE ACTIVE: Forcing BLE Setup Mode!")
             forced_ap_mode = True
             
             # Flash LED at medium speed for 1 second to confirm soft reset activation
@@ -127,15 +127,20 @@ cfg = config.load_config()
 client_cfg = cfg.get("client", {})
 mode = client_cfg.get("mode", "ap")
 
+if mode == "ap":
+    mode = "ble_setup"
+
 if forced_ap_mode:
-    mode = "ap"
+    mode = "ble_setup"
 
 # Start Display Manager
 if cfg.get("display", {}).get("enabled", True):
     try:
         import display_manager
-        heartbeats["display"] = time.time()
-        display_manager.start(heartbeats)
+        if display_manager.start(heartbeats):
+            heartbeats["display"] = time.time()
+        else:
+            print("📺 Display manager not started (init failed or disabled).")
     except Exception as e:
         print("🚨 Failed to start display manager:", e)
 
@@ -150,15 +155,14 @@ heartbeats["gps"] = time.time()
 _thread.start_new_thread(gps.gps_thread, (heartbeats,))
 time.sleep(1)
 
-# 2. Check if Access Point is active (either AP mode or fallback)
-ap = network.WLAN(network.AP_IF)
-if ap.active() or mode == "ap":
-    print("📡 Access Point active. Starting setup portal in background...")
+# 2. Check if BLE Provisioning is active (either BLE mode or fallback)
+if mode == "ble_setup":
+    print("📡 Setup mode active. Starting BLE provisioning service...")
     try:
-        import server
-        _thread.start_new_thread(server.start_server, ())
+        import ble_provisioning
+        _thread.start_new_thread(ble_provisioning.start_provisioning, ())
     except Exception as e:
-        print("🚨 Failed to start background web server:", e)
+        print("🚨 Failed to start BLE provisioning service:", e)
 
 # 3. Start MQTT Communication Thread if configured for STA mode
 if mode == "sta":

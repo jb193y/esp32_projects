@@ -25,9 +25,9 @@ if mode == "sta":
     connected = wifiap.connect_wifi(networks)
 
     if not connected:
-        print("Wi-Fi failed → entering AP setup mode")
+        print("Wi-Fi failed → entering BLE setup mode")
         led_status.set_status("AP_MODE")
-        wifiap.start_ap_mode()
+        cfg.setdefault("client", {})["mode"] = "ble_setup"
     else:
         # Successfully connected to Wi-Fi
         led_status.set_status("WIFI_CONNECTED")
@@ -38,8 +38,8 @@ if mode == "sta":
         config.sync_time_ntp(cfg)
 
 else:
-    print("AP mode selected")
+    print("BLE setup mode selected")
     led_status.set_status("AP_MODE")
-    wifiap.start_ap_mode()
+    cfg.setdefault("client", {})["mode"] = "ble_setup"
 
 print(">>> boot.py COMPLETED <<<")

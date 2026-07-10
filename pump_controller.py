@@ -449,9 +449,9 @@ def pump_thread(heartbeats=None):
                         print("🧹 Entering pairing mode via setup button press! Saving config and resetting...")
                         # Turn off pump immediately for safety
                         pump_command("PUMP_OFF")
-                        # Update config mode to ap
+                        # Update config mode to ble_setup
                         cfg_to_update = config.load_config()
-                        cfg_to_update.setdefault("client", {})["mode"] = "ap"
+                        cfg_to_update.setdefault("client", {})["mode"] = "ble_setup"
                         config.save_config(cfg_to_update)
                         # Sound buzzer briefly to signal success
                         try:

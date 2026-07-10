@@ -89,30 +89,39 @@ def init_display():
 def draw_setup_portal(cfg):
     # 1. Header Banner
     tft.fill_rect(0, 0, 320, 30, BLUE)
-    tft.text("PAIRING MODE ACTIVE", 10, 11, WHITE, BLUE)
+    tft.text("BLE PAIRING ACTIVE", 10, 11, WHITE, BLUE)
     
     # 2. Divider Line
     tft.fill_rect(0, 30, 320, 1, WHITE)
     
     # 3. Setup Body
     tft.fill_rect(0, 35, 320, 160, BLACK)
-    tft.text("To configure this controller:", 10, 45, WHITE, BLACK)
+    tft.text("To configure this device:", 10, 45, WHITE, BLACK)
     
-    tft.text("1. Connect to WiFi network:", 10, 75, CYAN, BLACK)
+    tft.text("1. Open mobile app", 10, 75, CYAN, BLACK)
+    tft.text("2. Scan for BLE devices", 10, 100, CYAN, BLACK)
     
-    ap_ssid = cfg.get("server", {}).get("ap_ssid", "ESP32_Pump_Setup")
-    ap_pass = cfg.get("server", {}).get("ap_password", "12345678")
+    client_id = cfg.get("client", {}).get("id", "esp32_pump_01")
+    dev_name = f"{client_id}_Setup"
     
-    tft.text(f"   SSID: {ap_ssid}", 10, 95, YELLOW, BLACK)
-    tft.text(f"   Pass: {ap_pass}", 10, 115, YELLOW, BLACK)
-    
-    tft.text("2. Open your mobile app:", 10, 145, CYAN, BLACK)
-    tft.text("   And follow provisioning steps", 10, 165, YELLOW, BLACK)
+    tft.text("3. Connect to BLE device:", 10, 125, CYAN, BLACK)
+    tft.text(f"   Name: {dev_name}", 10, 145, YELLOW, BLACK)
+    tft.text("4. Send Wi-Fi & MQTT setup data", 10, 170, CYAN, BLACK)
     
     # 4. Footer
     tft.fill_rect(0, 195, 320, 45, BLACK)
     tft.fill_rect(0, 198, 320, 1, GRAY)
-    tft.text("WAITING FOR MOBILE CONNECTION...", 10, 212, GREEN, BLACK)
+    
+    try:
+        import ble_provisioning
+        connected = ble_provisioning.is_connected()
+    except:
+        connected = False
+        
+    if connected:
+        tft.text("BLE STATUS: CONNECTED!", 10, 212, GREEN, BLACK)
+    else:
+        tft.text("WAITING FOR BLE CONNECTION...", 10, 212, YELLOW, BLACK)
 
 ota_status = None
 last_command = None
@@ -161,7 +170,7 @@ def draw_dashboard():
         return
         
     client_mode = cfg.get("client", {}).get("mode", "ap")
-    if client_mode == "ap":
+    if client_mode in ["ap", "ble_setup"]:
         draw_setup_portal(cfg)
         return
         
@@ -313,9 +322,10 @@ def display_thread(heartbeats=None):
 
 def start(heartbeats=None):
     if not init_display():
-        return
+        return False
     _thread.stack_size(8192)
     _thread.start_new_thread(display_thread, (heartbeats,))
+    return True
 
 def stop():
     global running
