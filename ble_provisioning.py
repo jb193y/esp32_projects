@@ -108,7 +108,25 @@ def start_provisioning():
     try:
         # Instantiate BLE
         ble_instance = bluetooth.BLE()
-        ble_instance.active(True)
+        
+        # Workaround: Initialize Wi-Fi first to ensure internal radio clocks/power are configured
+        import network
+        wlan = network.WLAN(network.STA_IF)
+        if not wlan.active():
+            wlan.active(True)
+            time.sleep_ms(200)
+
+        # Retry loop for BLE activation
+        for attempt in range(3):
+            try:
+                ble_instance.active(True)
+                break
+            except Exception as e:
+                if attempt == 2:
+                    raise e
+                print("⚠️ BLE activation attempt %d failed: %s. Retrying in 500ms..." % (attempt + 1, str(e)))
+                time.sleep_ms(500)
+                
         ble_instance.irq(irq_handler)
         
         # Register GATT services
