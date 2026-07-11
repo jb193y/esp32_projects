@@ -122,54 +122,66 @@ except Exception as e:
 # 0. Start LED thread for status indication
 _thread.start_new_thread(led_status.led_thread, ())
 
+import gc
+gc.collect()
+
 # Load configuration
 cfg = config.load_config()
 client_cfg = cfg.get("client", {})
 mode = client_cfg.get("mode", "ap")
 
-if mode == "ap":
+if mode == "ap" or forced_ap_mode:
     mode = "ble_setup"
 
-if forced_ap_mode:
-    mode = "ble_setup"
+# 1. Initialize BLE Provisioning early to avoid heap fragmentation/exhaustion
+if mode == "ble_setup":
+    print("📡 Setup mode active. Starting BLE provisioning service early...")
+    try:
+        import ble_provisioning
+        _thread.start_new_thread(ble_provisioning.start_provisioning, ())
+        # Give BLE time to allocate heap and start advertising
+        time.sleep(2.5)
+        gc.collect()
+    except Exception as e:
+        print("🚨 Failed to start BLE provisioning service:", e)
 
-# Start Display Manager
+# 2. Start Display Manager
 if cfg.get("display", {}).get("enabled", True):
     try:
         import display_manager
         if display_manager.start(heartbeats):
             heartbeats["display"] = time.time()
+            gc.collect()
         else:
             print("📺 Display manager not started (init failed or disabled).")
     except Exception as e:
         print("🚨 Failed to start display manager:", e)
 
-# 1. Start Pump Controller Thread (Offline protection always runs)
+# 3. Start Pump Controller Thread (Offline protection always runs)
 _thread.start_new_thread(pump_controller.pump_thread, (heartbeats,))
-time.sleep(2)
-
-# 1.5. Start GPS Thread for location reporting
-print("🛰️ Starting GPS thread...")
-import gps
-heartbeats["gps"] = time.time()
-_thread.start_new_thread(gps.gps_thread, (heartbeats,))
 time.sleep(1)
+gc.collect()
 
-# 2. Check if BLE Provisioning is active (either BLE mode or fallback)
-if mode == "ble_setup":
-    print("📡 Setup mode active. Starting BLE provisioning service...")
+# 4. Start GPS Thread for location reporting (Skip in setup mode to save RAM)
+if mode != "ble_setup":
+    print("🛰️ Starting GPS thread...")
     try:
-        import ble_provisioning
-        _thread.start_new_thread(ble_provisioning.start_provisioning, ())
+        import gps
+        heartbeats["gps"] = time.time()
+        _thread.start_new_thread(gps.gps_thread, (heartbeats,))
+        time.sleep(1)
+        gc.collect()
     except Exception as e:
-        print("🚨 Failed to start BLE provisioning service:", e)
+        print("🚨 Failed to start GPS thread:", e)
+else:
+    print("🛰️ Setup Mode: Skipping GPS thread loading to conserve RAM.")
 
-# 3. Start MQTT Communication Thread if configured for STA mode
+# 5. Start MQTT Communication Thread if configured for STA mode
 if mode == "sta":
     print("📶 STA Mode configured. Starting MQTT communication...")
     heartbeats["mqtt"] = time.time()
     _thread.start_new_thread(mqtt.mqtt_thread, (heartbeats,))
 
-# 4. Run Watchdog
+# 6. Run Watchdog
 print("🛡️ System Monitor Active")
 monitor_threads()

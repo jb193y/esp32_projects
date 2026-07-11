@@ -4,7 +4,7 @@
     "type": "pump",
     "mode": "ap",
     "hardware_version": "esp32_1.0",
-    "firmware_version": "firmesp32_v7",
+    "firmware_version": "firmesp32_v8",
     "serial_number": "SN-2026-0701-09",
     "model": "AP-Pump-Controller"
   },
