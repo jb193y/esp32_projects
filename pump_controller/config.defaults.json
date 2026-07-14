@@ -1,0 +1,30 @@
+{
+  "client": {
+    "id": "pump_node_01",
+    "type": "pump",
+    "custom_name": "AgriPulse Pump Controller",
+    "firmware_version": "pump_v1.0.0",
+    "mode": "ble_setup"
+  },
+  "hub": {
+    "mac": "00:00:00:00:00:00"
+  },
+  "pump": {
+    "pins": {
+      "relay": 16,
+      "estop": 4,
+      "current_sensor": 34,
+      "voltage_sensor": 35,
+      "buzzer": 21,
+      "led_run": 2,
+      "led_fault": 12
+    }
+  },
+  "safety": {
+    "overcurrent_limit_amps": 15.0,
+    "dryrun_limit_amps": 1.5,
+    "overvoltage_limit_volts": 250.0,
+    "undervoltage_limit_volts": 180.0,
+    "restart_delay_sec": 60
+  }
+}

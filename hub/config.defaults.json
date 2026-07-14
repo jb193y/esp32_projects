@@ -1,0 +1,25 @@
+{
+  "client": {
+    "id": "hub_master_01",
+    "type": "hub",
+    "custom_name": "AgriPulse Master Hub",
+    "firmware_version": "hub_v1.0.0",
+    "mode": "ble_setup"
+  },
+  "wifi": {
+    "networks": []
+  },
+  "mqtt": {
+    "server": "192.168.1.100",
+    "port": 1883,
+    "user": "",
+    "password": "",
+    "keepalive": 60,
+    "topic_prefix": "farm/hub_master_01"
+  },
+  "scheduler": {
+    "irrigation_deficit_threshold": 10.0,
+    "well_recharge_delay_sec": 1800,
+    "load_shedding_stabilization_delay_sec": 300
+  }
+}

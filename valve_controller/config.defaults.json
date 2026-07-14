@@ -1,0 +1,23 @@
+{
+  "client": {
+    "id": "valve_node_01",
+    "type": "valve",
+    "custom_name": "AgriPulse Valve Controller",
+    "firmware_version": "valve_v1.0.0",
+    "mode": "ble_setup"
+  },
+  "hub": {
+    "mac": "00:00:00:00:00:00"
+  },
+  "parent": {
+    "mac": "00:00:00:00:00:00"
+  },
+  "valve": {
+    "pins": {
+      "solenoid_open": 18,
+      "solenoid_close": 19,
+      "led_run": 2,
+      "led_fault": 12
+    }
+  }
+}
