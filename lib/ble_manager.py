@@ -1,4 +1,4 @@
-# ble_manager.py (Hub)
+# ble_manager.py (Common Library)
 import bluetooth
 import ujson
 import machine
@@ -25,10 +25,9 @@ _READ_CHAR = (_READ_CHAR_UUID, bluetooth.FLAG_READ)
 _SERVICE = (_SERVICE_UUID, (_WRITE_CHAR, _READ_CHAR))
 
 def is_connected():
-    global is_ble_connected
     return is_ble_connected
 
-def get_advertising_payload(name="Hub_Setup"):
+def get_advertising_payload(name="ESP32_Setup"):
     flags = b'\x02\x01\x06'
     name_bytes = name.encode('utf-8')
     name_field = bytes([len(name_bytes) + 1, 0x09]) + name_bytes
@@ -39,7 +38,7 @@ def get_advertising_payload(name="Hub_Setup"):
 def start_advertising():
     global ble_instance
     cfg = config.load_config()
-    client_id = cfg.get("client", {}).get("id", "hub_master_01")
+    client_id = cfg.get("client", {}).get("id", "esp32_node_01")
     dev_name = f"{client_id}_Setup"
     adv_payload = get_advertising_payload(dev_name)
     ble_instance.gap_advertise(100000, adv_payload)
@@ -64,42 +63,51 @@ def irq_handler(event, data):
 def update_device_config(data):
     cfg = config.load_config()
     
-    # WiFi network settings
+    # 1. WiFi parameters (Hub)
     if "wifi_ssid" in data:
         ssid = data["wifi_ssid"]
         password = data.get("wifi_pass", "")
         cfg["wifi"] = {"networks": [{"ssid": ssid, "password": password}]}
         print(f"💾 Wi-Fi Config updated: SSID={ssid}")
-
-    # MQTT broker settings
+        
     if "mqtt_broker" in data:
         cfg["mqtt"]["server"] = data["mqtt_broker"]
         print(f"💾 MQTT Broker updated: {data['mqtt_broker']}")
-
-    # Node Name / Custom Name
+        
+    # 2. Hub MAC (Pump / Valve)
+    if "hub_mac" in data:
+        cfg.setdefault("hub", {})["mac"] = data["hub_mac"]
+        print(f"💾 Hub MAC updated: {data['hub_mac']}")
+        
+    # 3. Parent MAC (Valve)
+    if "parent_mac" in data:
+        cfg.setdefault("parent", {})["mac"] = data["parent_mac"]
+        print(f"💾 Parent MAC updated: {data['parent_mac']}")
+        
+    # 4. Custom Name
     if "custom_name" in data:
         cfg["client"]["custom_name"] = data["custom_name"]
         print(f"💾 Custom Name updated: {data['custom_name']}")
-
-    # Node ID
+        
+    # 5. Node ID / Client ID
     if "node_id" in data:
         cfg["client"]["id"] = data["node_id"]
-        cfg["mqtt"]["topic_prefix"] = f"farm/{data['node_id']}"
+        # Update topic prefix if mqtt group exists
+        if "mqtt" in cfg:
+            cfg["mqtt"]["topic_prefix"] = f"farm/{data['node_id']}"
         print(f"💾 Node ID updated: {data['node_id']}")
-
-    # Change mode back to station (sta) mode
+        
     cfg["client"]["mode"] = "sta"
     
     config.save_config(cfg)
-    print("✅ Hub configuration saved. Rebooting device in 2 seconds...")
+    print("✅ Configuration saved. Rebooting device in 2 seconds...")
 
 def start_provisioning():
     global ble_instance, write_handle, read_handle, pending_config
-    print("🚀 Initializing BLE Provisioning Service on Hub...")
+    print("🚀 Initializing Common BLE Provisioning Service...")
     try:
         ble_instance = bluetooth.BLE()
         
-        # Ensure wifi active (required for clock/radio power on some ESP32 chips)
         import network
         wlan = network.WLAN(network.STA_IF)
         if not wlan.active():
@@ -129,10 +137,10 @@ def start_provisioning():
             mac_str = "000000000000"
 
         dev_info = {
-            "device_id": client_cfg.get("id", "hub_master_01"),
-            "device_type": client_cfg.get("type", "hub"),
+            "device_id": client_cfg.get("id", "esp32_node_01"),
+            "device_type": client_cfg.get("type", "unknown"),
             "mac": mac_str,
-            "fw_ver": client_cfg.get("firmware_version", "hub_v1.0.0")
+            "fw_ver": client_cfg.get("firmware_version", "1.0.0")
         }
         ble_instance.gatts_write(read_handle, ujson.dumps(dev_info).encode('utf-8'))
         

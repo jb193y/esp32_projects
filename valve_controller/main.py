@@ -7,42 +7,13 @@ import gc
 import config
 import led_status
 import ble_manager
-import relay_engine
-import espnow
-import ujson
+import esp_now_client
 
 # State
 solenoid_open_pin = None
 solenoid_close_pin = None
 valve_state = "CLOSED" # "OPEN", "CLOSED"
-paired = False
-hub_mac_bytes = None
-parent_mac_bytes = None
-
-def mac_to_bytes(mac_str):
-    return bytes(int(x, 16) for x in mac_str.split(':'))
-
-def bytes_to_mac(mac_bytes):
-    return ':'.join('%02x' % b for b in mac_bytes)
-
-def add_peer_safe(e, peer_bytes):
-    try:
-        e.add_peer(peer_bytes)
-    except OSError as err:
-        if err.args[0] == 17: # EEXIST
-            return
-        print("⚠️ ESP-NOW Peer limit reached, cleaning up...")
-        try:
-            peers = e.peers() if callable(getattr(e, 'peers', None)) else e.peers
-        except:
-            peers = []
-        if peers:
-            try:
-                e.del_peer(peers[0])
-                e.add_peer(peer_bytes)
-            except Exception as ex:
-                print("❌ Failed to resolve peer slots:", ex)
-                raise err
+last_telemetry_time = 0
 
 def pulse_solenoid(open_pulse=True):
     global solenoid_open_pin, solenoid_close_pin, valve_state
@@ -70,65 +41,23 @@ def pulse_solenoid(open_pulse=True):
         
     print(f"🚰 Solenoid Action complete. State: {valve_state}")
 
-def send_ack_or_tele_to_hub(e, msg_type, payload):
-    cfg = config.load_config()
-    hub_mac_str = cfg.get("hub", {}).get("mac", "00:00:00:00:00:00")
-    parent_mac_str = cfg.get("parent", {}).get("mac", "00:00:00:00:00:00")
-    
-    routing_path = []
-    if parent_mac_str != "00:00:00:00:00:00" and parent_mac_str != hub_mac_str:
-        routing_path = [parent_mac_str, hub_mac_str]
-    else:
-        routing_path = [hub_mac_str]
-        
-    packet = {
-        "msg_type": msg_type,
-        "target_mac": hub_mac_str,
-        "routing_path": routing_path,
-        "current_hop_index": 0,
-        "payload": payload
-    }
-    
-    next_hop = routing_path[0]
-    next_hop_bytes = mac_to_bytes(next_hop)
-    
-    try:
-        add_peer_safe(e, next_hop_bytes)
-        payload_str = ujson.dumps(packet)
-        e.send(next_hop_bytes, payload_str.encode('utf-8'))
-        print(f"🛫 ACK/TELE sent to next hop {next_hop} for Hub")
-        return True
-    except Exception as err:
-        print("❌ Failed to transmit packet back to Hub:", err)
-        return False
-
-def send_pairing_request(e):
-    cfg = config.load_config()
-    client_cfg = cfg.get("client", {})
-    payload = {
-        "node_type": "VALVE",
-        "custom_name": client_cfg.get("custom_name", "Valve Node")
-    }
-    print("🤝 Sending PAIR_REQ from Valve...")
-    send_ack_or_tele_to_hub(e, "PAIR_REQ", payload)
-
-def handle_local_commands(e, cmd, args):
+def handle_hub_commands(cmd, args):
     global valve_state
     print(f"⚙️ Handling local command: {cmd}")
     
     if cmd == "VALVE_OPEN":
         pulse_solenoid(open_pulse=True)
-        send_ack_or_tele_to_hub(e, "ACK", {"valve_state": valve_state, "node_status": "active"})
+        esp_now_client.send_ack_or_tele_to_hub("ACK", {"valve_state": valve_state, "node_status": "active"})
         
     elif cmd == "VALVE_CLOSE":
         pulse_solenoid(open_pulse=False)
-        send_ack_or_tele_to_hub(e, "ACK", {"valve_state": valve_state, "node_status": "active"})
+        esp_now_client.send_ack_or_tele_to_hub("ACK", {"valve_state": valve_state, "node_status": "active"})
         
     elif cmd == "GET_STATUS":
-        send_ack_or_tele_to_hub(e, "ACK", {"valve_state": valve_state, "node_status": "active"})
+        esp_now_client.send_ack_or_tele_to_hub("ACK", {"valve_state": valve_state, "node_status": "active"})
 
 def main():
-    global solenoid_open_pin, solenoid_close_pin, paired, valve_state
+    global solenoid_open_pin, solenoid_close_pin, valve_state, last_telemetry_time
     print("🚀 Valve Controller Starting...")
     
     # 1. Start Status LED
@@ -173,16 +102,12 @@ def main():
     solenoid_open_pin.value(0)
     solenoid_close_pin.value(0)
     
-    sta = machine.WLAN(machine.STA_IF)
-    sta.active(True)
+    # Initialize ESP-NOW client
+    esp_now_client.init_espnow_client()
     
-    e = espnow.ESPNow()
-    e.active(True)
-    
-    relay_engine.init_relay_engine(e)
-    
-    send_pairing_request(e)
-    last_tele_time = time.time()
+    # Start receiver thread
+    heartbeats = {"esp_now": time.time()}
+    _thread.start_new_thread(esp_now_client.client_listen_loop, (heartbeats, handle_hub_commands))
     
     print("✅ Valve Node ready and running loop.")
     
@@ -190,44 +115,22 @@ def main():
         try:
             gc.collect()
             
-            host, msg = e.recv(200)
-            if host is not None and msg is not None:
-                sender_mac = bytes_to_mac(host)
-                payload_str = msg.decode('utf-8')
-                print(f"📥 Received packet from {sender_mac}: {payload_str}")
-                
-                packet = ujson.loads(payload_str)
-                
-                msg_type = packet.get("msg_type")
-                if msg_type == "ACK" and packet.get("target_mac") == bytes_to_mac(sta.config('mac')):
-                    if packet.get("payload", {}).get("status") == "paired":
-                        paired = True
-                        print("✅ Valve paired successfully with Hub.")
-                
-                is_for_us = relay_engine.process_and_relay(packet)
-                if is_for_us:
-                    payload = packet.get("payload", {})
-                    cmd = payload.get("cmd")
-                    handle_local_commands(e, cmd, payload)
-            else:
-                if not paired:
-                    send_pairing_request(e)
-                    time.sleep(5)
-                else:
-                    now = time.time()
-                    if now - last_tele_time >= 10:
-                        last_tele_time = now
-                        send_ack_or_tele_to_hub(e, "TELE", {
-                            "node_id": client_cfg.get("id"),
-                            "status": "valve_idle",
-                            "valve_state": valve_state,
-                            "rssi": -50
-                        })
-                    time.sleep_ms(50)
+            # Send periodic telemetry if paired
+            if esp_now_client.is_paired():
+                now = time.time()
+                if now - last_telemetry_time >= 10:
+                    last_telemetry_time = now
+                    esp_now_client.send_ack_or_tele_to_hub("TELE", {
+                        "node_id": client_cfg.get("id"),
+                        "status": "valve_idle",
+                        "valve_state": valve_state,
+                        "rssi": -50
+                    })
                     
         except Exception as err:
             print("⚠️ Valve Loop Error:", err)
-            time.sleep(1)
+            
+        time.sleep(1)
 
 if __name__ == "__main__":
     main()
