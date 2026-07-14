@@ -47,20 +47,37 @@ try:
     if btn_setup.value() == 0:
         print("⏳ Checking Setup Button Boot Override...")
         held_count = 0
-        # Wait up to 10 seconds (100 * 100ms)
-        while btn_setup.value() == 0 and held_count < 100:
+        
+        # Load LED run pin for feedback
+        led_pin_num = boot_cfg.get("pump", {}).get("pins", {}).get("led_run", 2)
+        led = machine.Pin(led_pin_num, machine.Pin.OUT)
+        
+        # Wait up to 5 seconds (50 * 100ms)
+        while btn_setup.value() == 0 and held_count < 50:
             time.sleep_ms(100)
             held_count += 1
+            
+            # LED blinking feedback:
+            if held_count >= 20:
+                # AP setup override is ready -> blink fast
+                led.value(held_count % 2 == 0)
+            else:
+                # Standard counting -> blink slow
+                led.value(held_count % 4 == 0)
+                
             if held_count % 10 == 0:
                 sec = held_count // 10
-                if sec >= 10:
+                if sec >= 5:
                     print("🚨 Hold button... %ds (FACTORY RESET TRIGGERED!)" % sec)
-                elif sec >= 3:
+                elif sec >= 2:
                     print("⏳ Hold button... %ds (AP setup override active)" % sec)
                 else:
                     print("⏳ Hold button... %ds" % sec)
             
-        if held_count >= 100:
+        # Ensure LED is turned off after loop
+        led.value(0)
+            
+        if held_count >= 50:
             print("🚨 FACTORY RESET ACTIVE: Wiping config.json and rebooting...")
             import os
             try:
@@ -69,21 +86,34 @@ try:
             except Exception as e:
                 print("⚠️ config.json removal error (it may already be empty):", e)
                 
-            # Sound the buzzer for 2 seconds to confirm the factory reset
+            # Sound the buzzer and blink the LED very rapidly for 2 seconds
             try:
                 buzzer_pin_num = boot_cfg.get("pump", {}).get("pins", {}).get("buzzer", 21)
                 buzzer = machine.Pin(buzzer_pin_num, machine.Pin.OUT)
-                buzzer.value(1)
-                time.sleep(2.0)
-                buzzer.value(0)
+                
+                # Rapid feedback sequence (20 cycles of 100ms = 2 seconds)
+                for _ in range(20):
+                    led.value(1)
+                    buzzer.value(1)
+                    time.sleep_ms(50)
+                    led.value(0)
+                    buzzer.value(0)
+                    time.sleep_ms(50)
             except Exception:
                 pass
                 
             time.sleep(0.5)
             machine.reset()
-        elif held_count >= 30:
-            print("🚀 SETUP OVERRIDE ACTIVE: Forcing Access Point Setup Mode!")
+        elif held_count >= 20:
+            print("🚀 SETUP OVERRIDE ACTIVE: Forcing BLE Setup Mode!")
             forced_ap_mode = True
+            
+            # Flash LED at medium speed for 1 second to confirm soft reset activation
+            for _ in range(5):
+                led.value(1)
+                time.sleep_ms(100)
+                led.value(0)
+                time.sleep_ms(100)
         else:
             print("ℹ️ Button released too early. Standard boot continues.")
 except Exception as e:
@@ -92,50 +122,66 @@ except Exception as e:
 # 0. Start LED thread for status indication
 _thread.start_new_thread(led_status.led_thread, ())
 
+import gc
+gc.collect()
+
 # Load configuration
 cfg = config.load_config()
 client_cfg = cfg.get("client", {})
 mode = client_cfg.get("mode", "ap")
 
-if forced_ap_mode:
-    mode = "ap"
+if mode == "ap" or forced_ap_mode:
+    mode = "ble_setup"
 
-# Start Display Manager
+# 1. Initialize BLE Provisioning early to avoid heap fragmentation/exhaustion
+if mode == "ble_setup":
+    print("📡 Setup mode active. Starting BLE provisioning service early...")
+    try:
+        import ble_provisioning
+        _thread.start_new_thread(ble_provisioning.start_provisioning, ())
+        # Give BLE time to allocate heap and start advertising
+        time.sleep(2.5)
+        gc.collect()
+    except Exception as e:
+        print("🚨 Failed to start BLE provisioning service:", e)
+
+# 2. Start Display Manager
 if cfg.get("display", {}).get("enabled", True):
     try:
         import display_manager
-        heartbeats["display"] = time.time()
-        display_manager.start(heartbeats)
+        if display_manager.start(heartbeats):
+            heartbeats["display"] = time.time()
+            gc.collect()
+        else:
+            print("📺 Display manager not started (init failed or disabled).")
     except Exception as e:
         print("🚨 Failed to start display manager:", e)
 
-# 1. Start Pump Controller Thread (Offline protection always runs)
+# 3. Start Pump Controller Thread (Offline protection always runs)
 _thread.start_new_thread(pump_controller.pump_thread, (heartbeats,))
-time.sleep(2)
-
-# 1.5. Start GPS Thread for location reporting
-print("🛰️ Starting GPS thread...")
-import gps
-heartbeats["gps"] = time.time()
-_thread.start_new_thread(gps.gps_thread, (heartbeats,))
 time.sleep(1)
+gc.collect()
 
-# 2. Check if Access Point is active (either AP mode or fallback)
-ap = network.WLAN(network.AP_IF)
-if ap.active() or mode == "ap":
-    print("📡 Access Point active. Starting setup portal in background...")
+# 4. Start GPS Thread for location reporting (Skip in setup mode to save RAM)
+if mode != "ble_setup":
+    print("🛰️ Starting GPS thread...")
     try:
-        import server
-        _thread.start_new_thread(server.start_server, ())
+        import gps
+        heartbeats["gps"] = time.time()
+        _thread.start_new_thread(gps.gps_thread, (heartbeats,))
+        time.sleep(1)
+        gc.collect()
     except Exception as e:
-        print("🚨 Failed to start background web server:", e)
+        print("🚨 Failed to start GPS thread:", e)
+else:
+    print("🛰️ Setup Mode: Skipping GPS thread loading to conserve RAM.")
 
-# 3. Start MQTT Communication Thread if configured for STA mode
+# 5. Start MQTT Communication Thread if configured for STA mode
 if mode == "sta":
     print("📶 STA Mode configured. Starting MQTT communication...")
     heartbeats["mqtt"] = time.time()
     _thread.start_new_thread(mqtt.mqtt_thread, (heartbeats,))
 
-# 4. Run Watchdog
+# 6. Run Watchdog
 print("🛡️ System Monitor Active")
 monitor_threads()
