@@ -176,7 +176,7 @@ Once Anaconda/Miniconda is installed:
 1. Open the **Miniconda Prompt** / **Anaconda Prompt**.
 2. Navigate to your project folder:
    ```cmd
-   cd /d "E:\00.0. Jayanti Baraiya - NSAShared\04.A ESP32\esp32_starter"
+   cd /d "E:\00.0. Jayanti Baraiya - NSAShared\04.A ESP32\esp32_projects"
    ```
 3. Create a local virtual environment named `.venv` in your project folder using Conda's Python:
    ```cmd
