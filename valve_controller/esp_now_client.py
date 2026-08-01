@@ -41,24 +41,26 @@ def add_peer_safe(e, peer_bytes):
                 print("❌ Failed to resolve peer slots:", ex)
                 raise err
 
-def send_ack_or_tele_to_hub(msg_type, payload):
+def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
     global _e
     if _e is None:
         return False
         
     cfg = config.load_config()
     hub_mac_str = cfg.get("hub", {}).get("mac", "00:00:00:00:00:00")
+    dest_mac = target_mac if target_mac is not None else hub_mac_str
+    
     parent_mac_str = cfg.get("parent", {}).get("mac", "00:00:00:00:00:00")
     
     routing_path = []
-    if parent_mac_str != "00:00:00:00:00:00" and parent_mac_str != hub_mac_str:
-        routing_path = [parent_mac_str, hub_mac_str]
+    if parent_mac_str != "00:00:00:00:00:00" and parent_mac_str != dest_mac:
+        routing_path = [parent_mac_str, dest_mac]
     else:
-        routing_path = [hub_mac_str]
+        routing_path = [dest_mac]
         
     packet = {
         "msg_type": msg_type,
-        "target_mac": hub_mac_str,
+        "target_mac": dest_mac,
         "routing_path": routing_path,
         "current_hop_index": 0,
         "payload": payload
@@ -71,10 +73,10 @@ def send_ack_or_tele_to_hub(msg_type, payload):
         add_peer_safe(_e, next_hop_bytes)
         payload_str = ujson.dumps(packet)
         _e.send(next_hop_bytes, payload_str.encode('utf-8'))
-        print(f"🛫 ACK/TELE sent to next hop {next_hop} for Hub")
+        print(f"🛫 ACK/TELE sent to next hop {next_hop} for destination {dest_mac}")
         return True
     except Exception as err:
-        print("❌ Failed to transmit packet back to Hub:", err)
+        print(f"❌ Failed to transmit packet back to destination {dest_mac}:", err)
         return False
 
 def send_pairing_request():
@@ -137,6 +139,11 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                 if is_for_us and on_cmd_received_fn is not None:
                     payload = packet.get("payload", {})
                     cmd = payload.get("cmd")
+                    
+                    # Inject sender_mac (original sender or immediate hop) to allow communicating back
+                    payload["sender_mac"] = packet.get("sender_mac", sender_mac)
+                    payload["routing_path"] = packet.get("routing_path", [])
+                    
                     on_cmd_received_fn(cmd, payload)
             else:
                 if not _paired:

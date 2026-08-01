@@ -12,12 +12,22 @@
   "parent": {
     "mac": "00:00:00:00:00:00"
   },
-  "valve": {
-    "pins": {
-      "solenoid_open": 18,
-      "solenoid_close": 19,
-      "led_run": 2,
-      "led_fault": 12
+  "valves": [
+    {
+      "1": {
+        "solenoid_open": 18,
+        "solenoid_close": 19,
+        "led_off": 21,
+        "led_on": 2,
+        "led_fault": 12
+      },
+      "2": {
+        "solenoid_open": 18,
+        "solenoid_close": 19,
+        "led_off": 21,
+        "led_on": 2,
+        "led_fault": 12
+      }
     }
-  }
+  ]
 }

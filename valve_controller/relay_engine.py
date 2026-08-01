@@ -54,9 +54,12 @@ def process_and_relay(packet):
     sta = network.WLAN(network.STA_IF)
     local_mac = bytes_to_mac(sta.config('mac'))
     
+    # If the packet is targeted at us, return True immediately
+    if target_mac and target_mac.upper() == local_mac.upper():
+        print("🎯 Packet reached final target destination.")
+        return True
+        
     if not routing_path:
-        if target_mac and target_mac.upper() == local_mac.upper():
-            return True
         return False
         
     if current_hop_index >= len(routing_path):
