@@ -37,6 +37,17 @@ def update_valve_leds(valve_id):
         if led_off: led_off.value(1)     # Shines Red/OFF color
         if led_fault: led_fault.value(0)
 
+    # Update main system status LED based on overall node state
+    any_fault = any(v.get("state") == "FAULT" for v in valves.values())
+    any_open = any(v.get("state") == "OPEN" for v in valves.values())
+    
+    if any_fault:
+        led_status.set_status("FAULT")
+    elif any_open:
+        led_status.set_status("VALVE_OPEN")
+    else:
+        led_status.set_status("VALVE_CLOSED")
+
 def pulse_solenoid(valve_id="1", open_pulse=True):
     valve = valves.get(valve_id)
     if not valve:
@@ -90,7 +101,7 @@ def handle_hub_commands(cmd, args):
         pulse_solenoid(valve_id, open_pulse=True)
         esp_now_client.send_ack_or_tele_to_hub("ACK", {
             "valve_id": valve_id,
-            "valve_state": valves.get(valve_id, {}).get("state", "CLOSED"),
+            "valves": {vid: v["state"] for vid, v in valves.items()},
             "node_status": "active"
         }, target_mac=sender_mac)
         
@@ -98,7 +109,7 @@ def handle_hub_commands(cmd, args):
         pulse_solenoid(valve_id, open_pulse=False)
         esp_now_client.send_ack_or_tele_to_hub("ACK", {
             "valve_id": valve_id,
-            "valve_state": valves.get(valve_id, {}).get("state", "CLOSED"),
+            "valves": {vid: v["state"] for vid, v in valves.items()},
             "node_status": "active"
         }, target_mac=sender_mac)
         
@@ -201,10 +212,11 @@ def main():
                 now = time.time()
                 if now - last_telemetry_time >= 10:
                     last_telemetry_time = now
+                    any_open = any(v.get("state") == "OPEN" for v in valves.values())
+                    node_status = "watering" if any_open else "valve_idle"
                     esp_now_client.send_ack_or_tele_to_hub("TELE", {
                         "node_id": client_cfg.get("id"),
-                        "status": "valve_idle",
-                        "valve_state": valves.get("1", {}).get("state", "CLOSED") if len(valves) == 1 else "multi",
+                        "status": node_status,
                         "valves": {vid: v["state"] for vid, v in valves.items()},
                         "rssi": -50
                     })
