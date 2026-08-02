@@ -18,15 +18,29 @@
         "solenoid_open": 18,
         "solenoid_close": 19,
         "led_off": 21,
-        "led_on": 2,
-        "led_fault": 12
+        "led_on": 22,
+        "led_fault": 23
       },
       "2": {
-        "solenoid_open": 18,
-        "solenoid_close": 19,
-        "led_off": 21,
-        "led_on": 2,
+        "solenoid_open": 25,
+        "solenoid_close": 26,
+        "led_off": 27,
+        "led_on": 14,
         "led_fault": 12
+      },
+      "3": {
+        "solenoid_open": 13,
+        "solenoid_close": 15,
+        "led_off": 16,
+        "led_on": 17,
+        "led_fault": 4
+      },
+      "4": {
+        "solenoid_open": 32,
+        "solenoid_close": 33,
+        "led_off": 5,
+        "led_on": 2,
+        "led_fault": 0
       }
     }
   ]
