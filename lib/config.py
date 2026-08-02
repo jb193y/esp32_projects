@@ -1,4 +1,4 @@
-# config.py (Pump Controller)
+# config.py (Shared Configuration Library)
 import ujson
 import os
 

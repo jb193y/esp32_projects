@@ -1,4 +1,4 @@
-# esp_now_client.py (Valve Controller)
+# esp_now_client.py (Shared ESP-NOW Client Library)
 import network
 import espnow
 import ujson
@@ -73,11 +73,15 @@ def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
         add_peer_safe(_e, next_hop_bytes)
         payload_str = ujson.dumps(packet)
         _e.send(next_hop_bytes, payload_str.encode('utf-8'))
-        print(f"🛫 ACK/TELE sent to next hop {next_hop} for destination {dest_mac}")
+        print(f"🛫 Packet sent to next hop {next_hop} for destination {dest_mac}")
         return True
     except Exception as err:
         print(f"❌ Failed to transmit packet back to destination {dest_mac}:", err)
         return False
+
+# Backward compatibility alias for pump controller
+def send_to_hub(msg_type, payload):
+    return send_ack_or_tele_to_hub(msg_type, payload)
 
 def send_pairing_request():
     global _e
@@ -86,16 +90,19 @@ def send_pairing_request():
         
     cfg = config.load_config()
     client_cfg = cfg.get("client", {})
+    node_type = client_cfg.get("type", "client").upper()
     payload = {
-        "node_type": "VALVE",
-        "custom_name": client_cfg.get("custom_name", "Valve Node")
+        "node_type": node_type,
+        "custom_name": client_cfg.get("custom_name", "Client Node")
     }
-    print("🤝 Sending PAIR_REQ from Valve...")
+    print(f"🤝 Sending PAIR_REQ from {node_type}...")
     send_ack_or_tele_to_hub("PAIR_REQ", payload)
 
-def init_espnow_client():
+def init_espnow_client(on_cmd_received_fn=None):
     global _e
-    print("🚀 Initializing Valve ESP-NOW Client...")
+    cfg = config.load_config()
+    client_name = cfg.get("client", {}).get("custom_name", "Client Node")
+    print(f"🚀 Initializing {client_name} ESP-NOW Client...")
     
     sta = network.WLAN(network.STA_IF)
     sta.active(True)
@@ -129,13 +136,21 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                 
                 packet = ujson.loads(payload_str)
                 msg_type = packet.get("msg_type")
+                target_mac = packet.get("target_mac")
                 
-                if msg_type == "ACK" and packet.get("target_mac") == local_mac:
+                if msg_type == "ACK" and (target_mac == local_mac or target_mac is None):
                     if packet.get("payload", {}).get("status") == "paired":
                         _paired = True
-                        print("✅ Valve paired successfully with Hub.")
+                        print("✅ Client paired successfully with Hub.")
                 
-                is_for_us = relay_engine.process_and_relay(packet)
+                # Relaying and target validation
+                is_for_us = False
+                if target_mac is None:
+                    # Legacy fallback
+                    is_for_us = (msg_type == "CMD" or msg_type == "ACK")
+                else:
+                    is_for_us = relay_engine.process_and_relay(packet)
+                    
                 if is_for_us and on_cmd_received_fn is not None:
                     payload = packet.get("payload", {})
                     cmd = payload.get("cmd")
@@ -153,5 +168,5 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                     time.sleep_ms(50)
                     
         except Exception as err:
-            print("⚠️ Valve client loop error:", err)
+            print("⚠️ Client loop error:", err)
             time.sleep(1)

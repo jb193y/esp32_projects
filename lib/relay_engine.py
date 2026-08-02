@@ -1,4 +1,4 @@
-# relay_engine.py (Valve Controller)
+# relay_engine.py (Shared Relay Engine Library)
 import ujson
 import network
 import espnow

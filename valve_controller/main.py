@@ -23,17 +23,19 @@ def update_valve_leds(valve_id):
     led_off = valve.get("led_off_pin")
     led_fault = valve.get("led_fault_pin")
     
-    # Standard feedback LED logic
-    if state == "OPEN":
-        if led_on: led_on.value(1)
-        if led_off: led_off.value(0)
-    else:
+    # RGB/Multicolor LED status logic
+    if state == "FAULT":
         if led_on: led_on.value(0)
-        if led_off: led_off.value(1)
-        
-    # Fault is off by default
-    if led_fault:
-        led_fault.value(0)
+        if led_off: led_off.value(0)
+        if led_fault: led_fault.value(1) # Shines Blue/Fault color
+    elif state == "OPEN":
+        if led_on: led_on.value(1)      # Shines Green/ON color
+        if led_off: led_off.value(0)
+        if led_fault: led_fault.value(0)
+    else: # CLOSED
+        if led_on: led_on.value(0)
+        if led_off: led_off.value(1)     # Shines Red/OFF color
+        if led_fault: led_fault.value(0)
 
 def pulse_solenoid(valve_id="1", open_pulse=True):
     valve = valves.get(valve_id)
