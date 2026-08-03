@@ -13,6 +13,26 @@ import esp_now_client
 valves = {}
 last_telemetry_time = 0
 
+def save_valve_states():
+    try:
+        import ujson
+        states = {vid: v["state"] for vid, v in valves.items()}
+        with open("valve_states.json", "w") as f:
+            ujson.dump(states, f)
+    except Exception as e:
+        print("⚠️ Failed to save valve states:", e)
+
+def load_valve_states():
+    try:
+        import ujson
+        import os
+        if "valve_states.json" in os.listdir():
+            with open("valve_states.json", "r") as f:
+                return ujson.load(f)
+    except Exception as e:
+        print("⚠️ Failed to load valve states:", e)
+    return {}
+
 def update_valve_leds(valve_id):
     valve = valves.get(valve_id)
     if not valve:
@@ -78,6 +98,7 @@ def pulse_solenoid(valve_id="1", open_pulse=True):
         valve["state"] = "CLOSED"
         
     update_valve_leds(valve_id)
+    save_valve_states()
     print(f"🚰 Solenoid Valve {valve_id} Action complete. State: {valve['state']}")
 
 def handle_hub_commands(cmd, args):
@@ -162,6 +183,9 @@ def main():
         valves_map = valves_cfg
 
 
+    # Load previously saved states to prevent out-of-sync states on reboot
+    saved_states = load_valve_states()
+
     # Initialize all valves
     for vid, pins in valves_map.items():
         open_pin_num = pins.get("solenoid_open")
@@ -183,7 +207,7 @@ def main():
         if close_pin: close_pin.value(0)
         
         valves[str(vid)] = {
-            "state": "CLOSED",
+            "state": saved_states.get(str(vid), "CLOSED"),
             "solenoid_open_pin": open_pin,
             "solenoid_close_pin": close_pin,
             "led_on_pin": led_on_pin,

@@ -1,0 +1,15 @@
+{
+  "client": {
+    "id": "valve_node_01",
+    "type": "valve",
+    "custom_name": "AgriPulse Valve Controller",
+    "firmware_version": "valve_v1.0.0",
+    "mode": "sta"
+  },
+  "hub": {
+    "mac": "3c:dc:75:6e:8f:64"
+  },
+  "parent": {
+    "mac": "3c:dc:75:6e:8f:64"
+  }
+}

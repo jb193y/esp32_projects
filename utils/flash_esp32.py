@@ -20,7 +20,7 @@ def get_local_file_hash(path):
         print(f"Error reading local file {path}: {e}")
         return None
 
-def get_device_files_metadata(mpremote):
+def get_device_files_metadata(mpremote, port):
     """Query the ESP32 for sizes and SHA256 hashes of all files recursively."""
     device_script = (
         "import os, hashlib, json\n"
@@ -53,14 +53,14 @@ def get_device_files_metadata(mpremote):
     )
     try:
         proc = subprocess.run(
-            [mpremote, 'connect', 'COM3', 'exec', device_script],
+            [mpremote, 'connect', port, 'exec', device_script],
             capture_output=True,
             text=True,
             check=True
         )
         output = proc.stdout
     except subprocess.CalledProcessError as e:
-        print(f"Error: Failed to query device filesystem metadata: {e.stderr or str(e)}")
+        print(f"Error: Failed to query device filesystem metadata on {port}: {e.stderr or str(e)}")
         return None
 
     if '__JSON_START__' not in output or '__JSON_END__' not in output:
@@ -80,13 +80,24 @@ def main():
     project_root = os.path.dirname(utils_dir)
     mpremote = os.path.join(project_root, '.venv', 'Scripts', 'mpremote.exe')
     
+    # Parse arguments
+    port = 'COM10'
+    project_dir = None
+    for arg in sys.argv[1:]:
+        if arg.upper().startswith('COM'):
+            port = arg
+        else:
+            project_dir = arg
+            
+    target_dir = os.path.join(project_root, project_dir) if project_dir else project_root
+    
     if not os.path.exists(mpremote):
         print(f"Error: mpremote not found at {mpremote}")
         sys.exit(1)
         
     # --- 1. Query Device Files for Sync & Cleanup ---
-    print("Scanning ESP32 device filesystem...")
-    device_files = get_device_files_metadata(mpremote)
+    print(f"Scanning ESP32 device filesystem on {port}...")
+    device_files = get_device_files_metadata(mpremote, port)
     if device_files is None:
         print("[ERROR] Device connection failed. Aborting sync.")
         sys.exit(1)
@@ -94,18 +105,18 @@ def main():
     # Compile the set of local files we expect to find on the device
     expected_files = {}
     
-    # Root configs
-    for f in glob.glob(os.path.join(project_root, 'config*.json')):
+    # Project configs
+    for f in glob.glob(os.path.join(target_dir, 'config*.json')):
         rel = os.path.basename(f)
         expected_files[rel] = f
         
-    # Root python files (excluding utility/helper scripts in utils/)
-    for f in glob.glob(os.path.join(project_root, '*.py')):
+    # Project python files (excluding utility/helper scripts in utils/)
+    for f in glob.glob(os.path.join(target_dir, '*.py')):
         basename = os.path.basename(f)
         if basename not in ('flash_esp32.py', 'verify_device.py', 'pack_code.py', 'unpack_code.py'):
             expected_files[basename] = f
         
-    # Lib python files
+    # Global shared lib python files
     for f in glob.glob(os.path.join(project_root, 'lib', '*.py')):
         rel = f"lib/{os.path.basename(f)}"
         expected_files[rel] = f
@@ -128,17 +139,17 @@ def main():
         print(f"Cleanup: Found {len(unwanted_files)} unwanted files on the ESP32. Deleting...")
         for f in unwanted_files:
             print(f" - Deleting {f}...")
-            subprocess.run([mpremote, 'connect', 'COM3', 'fs', 'rm', f':{f}'], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+            subprocess.run([mpremote, 'connect', port, 'fs', 'rm', f':{f}'], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
     else:
         print("Device filesystem clean (no unwanted files).")
-
+ 
     # --- 3. Create remote lib folder if needed ---
     if any(rel.startswith('lib/') for rel in expected_files.keys()):
         # Quick check if lib directory needs creation
         lib_exists = any(dev_f.startswith('lib/') for dev_f in device_files.keys())
         if not lib_exists:
-            print("\nCreating remote :lib directory...")
-            subprocess.run([mpremote, 'connect', 'COM3', 'fs', 'mkdir', ':lib'], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+            print(f"\nCreating remote :lib directory on {port}...")
+            subprocess.run([mpremote, 'connect', port, 'fs', 'mkdir', ':lib'], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
     
     # --- 4. Delta Sync Files ---
     print("\nChecking file sync status...")
@@ -161,7 +172,7 @@ def main():
             up_to_date_files.append(rel_path)
         else:
             out_of_sync_files.append((rel_path, local_abs_path))
-
+ 
     # Print up-to-date files first
     if up_to_date_files:
         print("\nUp-to-date files (skipped):")
@@ -170,12 +181,12 @@ def main():
             
     # Print and copy out-of-sync files
     if out_of_sync_files:
-        print("\nSynchronizing out-of-sync files to ESP32...")
+        print(f"\nSynchronizing out-of-sync files to ESP32 on {port}...")
         for rel_path, local_abs_path in out_of_sync_files:
             print(f" - Copying: {rel_path} (out of sync)...")
             target_path = f":{rel_path}"
-            subprocess.run([mpremote, 'connect', 'COM3', 'fs', 'cp', local_abs_path, target_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
+            subprocess.run([mpremote, 'connect', port, 'fs', 'cp', local_abs_path, target_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+ 
     print(f"\nESP32 sync complete! Synced: {len(out_of_sync_files)} files, Skipped: {len(up_to_date_files)} files.")
 
 if __name__ == '__main__':
