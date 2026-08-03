@@ -45,8 +45,10 @@ def main():
     ser = serial.Serial(port, 115200, timeout=2)
     
     # Enters raw REPL mode:
-    # 1. Send Ctrl-C (0x03) twice to interrupt any running script
-    ser.write(b'\x03\x03')
+    # 1. Send Ctrl-C (0x03) multiple times to interrupt any running script
+    for _ in range(5):
+        ser.write(b'\x03')
+        time.sleep(0.1)
     time.sleep(0.5)
     # Clear input buffer
     ser.reset_input_buffer()

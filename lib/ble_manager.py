@@ -46,6 +46,10 @@ def start_advertising():
     client_id = cfg.get("client", {}).get("id", "esp32_node_01")
     dev_name = f"{client_id}_Setup"
     adv_payload = get_advertising_payload(dev_name)
+    try:
+        ble_instance.gap_advertise(None)
+    except:
+        pass
     ble_instance.gap_advertise(100000, adv_payload)
     print(f"📣 BLE Advertising started: {dev_name}")
 
@@ -116,6 +120,16 @@ def start_provisioning():
     try:
         ble_instance = bluetooth.BLE()
         
+        try:
+            ble_instance.gap_advertise(None)
+        except:
+            pass
+        try:
+            ble_instance.active(False)
+            time.sleep_ms(100)
+        except:
+            pass
+            
         import network
         wlan = network.WLAN(network.STA_IF)
         if not wlan.active():
@@ -154,7 +168,9 @@ def start_provisioning():
         
         start_advertising()
     except Exception as e:
-        print("🚨 BLE Provisioning initialization failed:", e)
+        import sys
+        print("🚨 BLE Provisioning initialization failed:")
+        sys.print_exception(e)
         return
 
     # Polling loop

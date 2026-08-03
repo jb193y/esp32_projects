@@ -4,7 +4,7 @@
     "type": "valve",
     "custom_name": "AgriPulse Valve Controller",
     "firmware_version": "valve_v1.0.0",
-    "mode": "sta"
+    "mode": "ble_setup"
   },
   "hub": {
     "mac": "3c:dc:75:6e:8f:64"

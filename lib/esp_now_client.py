@@ -24,18 +24,27 @@ def set_paired(val):
 
 def add_peer_safe(e, peer_bytes):
     try:
+        peers_list = e.peers() if callable(getattr(e, 'peers', None)) else e.peers
+        peer_macs = [bytes(p[0]) for p in peers_list]
+    except Exception:
+        peer_macs = []
+
+    peer_bytes = bytes(peer_bytes)
+
+    if peer_bytes in peer_macs:
+        return
+
+    try:
         e.add_peer(peer_bytes)
     except OSError as err:
-        if err.args[0] == 17: # EEXIST
-            return
         print("⚠️ ESP-NOW Peer limit reached, cleaning up...")
         try:
-            peers = e.peers() if callable(getattr(e, 'peers', None)) else e.peers
+            peers_list = e.peers() if callable(getattr(e, 'peers', None)) else e.peers
         except:
-            peers = []
-        if peers:
+            peers_list = []
+        if peers_list:
             try:
-                e.del_peer(peers[0])
+                e.del_peer(peers_list[0][0])
                 e.add_peer(peer_bytes)
             except Exception as ex:
                 print("❌ Failed to resolve peer slots:", ex)
