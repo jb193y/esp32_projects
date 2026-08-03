@@ -1,10 +1,14 @@
-# ble_manager.py (Common Library)
-import bluetooth
 import ujson
 import machine
 import time
 import config
 import ubinascii
+
+try:
+    import bluetooth
+    has_ble = True
+except ImportError:
+    has_ble = False
 
 is_ble_connected = False
 pending_config = None
@@ -16,13 +20,14 @@ _IRQ_CENTRAL_CONNECT = 1
 _IRQ_CENTRAL_DISCONNECT = 2
 _IRQ_GATTS_WRITE = 3
 
-_SERVICE_UUID = bluetooth.UUID("0000ffe0-0000-1000-8000-00805f9b34fb")
-_WRITE_CHAR_UUID = bluetooth.UUID("0000ffe1-0000-1000-8000-00805f9b34fb")
-_READ_CHAR_UUID = bluetooth.UUID("0000ffe2-0000-1000-8000-00805f9b34fb")
+if has_ble:
+    _SERVICE_UUID = bluetooth.UUID("0000ffe0-0000-1000-8000-00805f9b34fb")
+    _WRITE_CHAR_UUID = bluetooth.UUID("0000ffe1-0000-1000-8000-00805f9b34fb")
+    _READ_CHAR_UUID = bluetooth.UUID("0000ffe2-0000-1000-8000-00805f9b34fb")
 
-_WRITE_CHAR = (_WRITE_CHAR_UUID, bluetooth.FLAG_WRITE | bluetooth.FLAG_WRITE_NO_RESPONSE)
-_READ_CHAR = (_READ_CHAR_UUID, bluetooth.FLAG_READ)
-_SERVICE = (_SERVICE_UUID, (_WRITE_CHAR, _READ_CHAR))
+    _WRITE_CHAR = (_WRITE_CHAR_UUID, bluetooth.FLAG_WRITE | bluetooth.FLAG_WRITE_NO_RESPONSE)
+    _READ_CHAR = (_READ_CHAR_UUID, bluetooth.FLAG_READ)
+    _SERVICE = (_SERVICE_UUID, (_WRITE_CHAR, _READ_CHAR))
 
 def is_connected():
     return is_ble_connected
@@ -104,6 +109,9 @@ def update_device_config(data):
 
 def start_provisioning():
     global ble_instance, write_handle, read_handle, pending_config
+    if not has_ble:
+        print("⚠️ Bluetooth (BLE) is not supported on this hardware platform.")
+        return
     print("🚀 Initializing Common BLE Provisioning Service...")
     try:
         ble_instance = bluetooth.BLE()

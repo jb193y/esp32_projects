@@ -11,5 +11,37 @@
   },
   "parent": {
     "mac": "3c:dc:75:6e:8f:64"
-  }
+  },
+  "valves": [
+    {
+      "1": {
+        "solenoid_open": 4,
+        "solenoid_close": 5,
+        "led_off": 6,
+        "led_on": 7,
+        "led_fault": 15
+      },
+      "2": {
+        "solenoid_open": 16,
+        "solenoid_close": 17,
+        "led_off": 18,
+        "led_on": 8,
+        "led_fault": 3
+      },
+      "3": {
+        "solenoid_open": 9,
+        "solenoid_close": 10,
+        "led_off": 11,
+        "led_on": 12,
+        "led_fault": 13
+      },
+      "4": {
+        "solenoid_open": 14,
+        "solenoid_close": 21,
+        "led_off": 38,
+        "led_on": 39,
+        "led_fault": 40
+      }
+    }
+  ]
 }
