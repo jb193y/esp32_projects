@@ -31,7 +31,7 @@ def publish_hub_telemetry(status_val):
         payload = {
             "timestamp": time.time(),
             "hub_status": status_val,
-            "motor_status": status_val,
+            "device_status": status_val,
             "mode": "AUTO"
         }
         publish_msg(tele_topic, payload)
