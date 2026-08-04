@@ -24,9 +24,16 @@ def is_connected():
 def publish_hub_telemetry(status_val):
     try:
         cfg = config.load_config()
-        client_id = cfg.get("client", {}).get("id", "hub_master_01")
-        client_type = cfg.get("client", {}).get("type", "hub").lower()
-        tele_topic = f"{client_type}/{client_id}/telemetry"
+        client = cfg.get("client", {})
+        client_id = client.get("id", "hub_master_01")
+        client_type = client.get("type", "hub").lower()
+        location = client.get("location")
+        group = client.get("group", "all")
+        
+        if location:
+            tele_topic = f"{location}/{group}/{client_type}/{client_id}/telemetry"
+        else:
+            tele_topic = f"{client_type}/{client_id}/telemetry"
         
         payload = {
             "timestamp": time.time(),
@@ -122,13 +129,17 @@ def mqtt_thread(heartbeats=None):
     
     cfg = config.load_config()
     mqtt_cfg = cfg.get("mqtt", {})
-    client_id = cfg.get("client", {}).get("id", "hub_master_01")
-    topic_prefix = mqtt_cfg.get("topic_prefix", f"farm/{client_id}")
+    client_info = cfg.get("client", {})
+    client_id = client_info.get("id", "hub_master_01")
+    client_type = client_info.get("type", "hub").lower()
+    location = client_info.get("location")
+    group = client_info.get("group", "all")
     
+    topic_prefix = mqtt_cfg.get("topic_prefix", f"farm/{client_id}")
     cmd_topic = f"{topic_prefix}/command"
-    # Status topic must match what mobile app subscribes to: {type}/{id}/status
-    client_type = cfg.get("client", {}).get("type", "hub").lower()
     status_topic = f"{client_type}/{client_id}/status"
+    if location:
+        status_topic = f"{location}/{group}/{client_type}/{client_id}/status"
     
     while True:
         if heartbeats is not None:
@@ -156,11 +167,18 @@ def mqtt_thread(heartbeats=None):
                 led_status.set_status("MQTT_CONNECTED")
                 print("✅ MQTT Connected!")
                 
-                # Subscribe to command topic
+                # Subscribe to command topics
                 _client.subscribe(cmd_topic.encode('utf-8'))
                 _client.subscribe(b"pump/+/command")
                 _client.subscribe(b"valve/+/command")
-                print(f"📡 Subscribed to command topics: {cmd_topic}, pump/+/command, valve/+/command")
+
+                if location:
+                    _client.subscribe(f"{location}/+/hub/{client_id}/command".encode('utf-8'))
+                    _client.subscribe(f"{location}/+/pump/+/command".encode('utf-8'))
+                    _client.subscribe(f"{location}/+/valve/+/command".encode('utf-8'))
+                    print(f"📡 Subscribed to location-scoped topics for location '{location}'")
+                else:
+                    print(f"📡 Subscribed to legacy command topics: {cmd_topic}, pump/+/command, valve/+/command")
                 
                 # Publish startup status
                 publish_msg(status_topic, {
