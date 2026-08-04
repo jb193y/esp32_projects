@@ -21,6 +21,23 @@ def register_cmd_dispatcher(dispatcher):
 def is_connected():
     return _is_connected
 
+def publish_hub_telemetry(status_val):
+    try:
+        cfg = config.load_config()
+        client_id = cfg.get("client", {}).get("id", "hub_master_01")
+        client_type = cfg.get("client", {}).get("type", "hub").lower()
+        tele_topic = f"{client_type}/{client_id}/telemetry"
+        
+        payload = {
+            "timestamp": time.time(),
+            "motor_status": status_val,
+            "mode": "AUTO"
+        }
+        publish_msg(tele_topic, payload)
+        print(f"📊 Published Hub telemetry: {status_val} to {tele_topic}")
+    except Exception as e:
+        print("❌ Error publishing Hub telemetry:", e)
+
 def on_message(topic, msg):
     global _cmd_dispatcher
     try:
@@ -66,6 +83,15 @@ def on_message(topic, msg):
         
         if not target or not command:
             print("⚠️ MQTT command payload missing target_node or command")
+            return
+
+        cfg = config.load_config()
+        client_id = cfg.get("client", {}).get("id", "hub_master_01")
+        if target == client_id:
+            if command in ("HUB_ENABLE", "HUB_DISABLE"):
+                status_val = "Enabled" if command == "HUB_ENABLE" else "Disabled"
+                config.update_config({"client": {"status": status_val}})
+                publish_hub_telemetry(status_val)
             return
             
         if _cmd_dispatcher:
@@ -139,8 +165,13 @@ def mqtt_thread(heartbeats=None):
                 publish_msg(status_topic, {
                     "client_id": client_id,
                     "status": "online",
+                    "timestamp": time.time(),
                     "fw_ver": cfg.get("client", {}).get("firmware_version", "hub_v1.0.0")
                 }, retain=True)
+                
+                # Publish initial Hub status telemetry
+                hub_status = cfg.get("client", {}).get("status", "Enabled")
+                publish_hub_telemetry(hub_status)
                 
             except Exception as e:
                 print("❌ MQTT connection failed:", e)
