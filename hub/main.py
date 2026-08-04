@@ -11,6 +11,7 @@ import network_manager
 import mqtt_client
 import esp_now_master
 import scheduler
+import factory_reset
 
 heartbeats = {
     "network": time.time(),
@@ -36,6 +37,9 @@ def main():
     
     # 1. Start Status LED
     _thread.start_new_thread(led_status.led_thread, ())
+    
+    # 1.5 Start Factory Reset monitor
+    factory_reset.start()
     
     # 2. Check if configuration exists
     cfg_exists = "config.json" in os.listdir()

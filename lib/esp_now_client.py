@@ -96,16 +96,18 @@ def send_pairing_request():
     global _e
     if _e is None:
         return
-        
+
     cfg = config.load_config()
     client_cfg = cfg.get("client", {})
     node_type = client_cfg.get("type", "client").upper()
     payload = {
         "node_type": node_type,
+        "node_id": client_cfg.get("id", ""),
         "custom_name": client_cfg.get("custom_name", "Client Node")
     }
     print(f"🤝 Sending PAIR_REQ from {node_type}...")
     send_ack_or_tele_to_hub("PAIR_REQ", payload)
+
 
 def init_espnow_client(on_cmd_received_fn=None):
     global _e

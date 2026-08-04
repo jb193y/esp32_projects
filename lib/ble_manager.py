@@ -36,8 +36,9 @@ def get_advertising_payload(name="ESP32_Setup"):
     flags = b'\x02\x01\x06'
     name_bytes = name.encode('utf-8')
     name_field = bytes([len(name_bytes) + 1, 0x09]) + name_bytes
-    service_uuid_bytes = b'\xfb\x34\x9b\x5f\x80\x00\x00\x10\x00\x00\x00\x00\xe0\xff\x00\x00'
-    service_field = bytes([len(service_uuid_bytes) + 1, 0x07]) + service_uuid_bytes
+    # 16-bit Service UUID: ffe0 (0x03 indicates 16-bit Service Class UUIDs list)
+    service_uuid_bytes = b'\xe0\xff'
+    service_field = bytes([len(service_uuid_bytes) + 1, 0x03]) + service_uuid_bytes
     return flags + service_field + name_field
 
 def start_advertising():
@@ -72,15 +73,15 @@ def irq_handler(event, data):
 def update_device_config(data):
     cfg = config.load_config()
     
-    # 1. WiFi parameters (Hub)
-    if "wifi_ssid" in data:
-        ssid = data["wifi_ssid"]
-        password = data.get("wifi_pass", "")
+    # 1. WiFi parameters — support both key naming conventions
+    ssid = data.get("ssid") or data.get("wifi_ssid")
+    password = data.get("password") or data.get("wifi_pass", "")
+    if ssid:
         cfg["wifi"] = {"networks": [{"ssid": ssid, "password": password}]}
         print(f"💾 Wi-Fi Config updated: SSID={ssid}")
         
     if "mqtt_broker" in data:
-        cfg["mqtt"]["server"] = data["mqtt_broker"]
+        cfg.setdefault("mqtt", {})["server"] = data["mqtt_broker"]
         print(f"💾 MQTT Broker updated: {data['mqtt_broker']}")
         
     # 2. Hub MAC (Pump / Valve)
@@ -95,18 +96,17 @@ def update_device_config(data):
         
     # 4. Custom Name
     if "custom_name" in data:
-        cfg["client"]["custom_name"] = data["custom_name"]
+        cfg.setdefault("client", {})["custom_name"] = data["custom_name"]
         print(f"💾 Custom Name updated: {data['custom_name']}")
         
-    # 5. Node ID / Client ID
-    if "node_id" in data:
-        cfg["client"]["id"] = data["node_id"]
-        # Update topic prefix if mqtt group exists
-        if "mqtt" in cfg:
-            cfg["mqtt"]["topic_prefix"] = f"farm/{data['node_id']}"
-        print(f"💾 Node ID updated: {data['node_id']}")
+    # 5. Node ID / Client ID — support both key naming conventions
+    node_id = data.get("node_id") or data.get("client_id")
+    if node_id:
+        cfg.setdefault("client", {})["id"] = node_id
+        cfg.setdefault("mqtt", {})["topic_prefix"] = f"farm/{node_id}"
+        print(f"💾 Node ID updated: {node_id}")
         
-    cfg["client"]["mode"] = "sta"
+    cfg.setdefault("client", {})["mode"] = "sta"
     
     config.save_config(cfg)
     print("✅ Configuration saved. Rebooting device in 2 seconds...")

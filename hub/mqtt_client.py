@@ -29,10 +29,40 @@ def on_message(topic, msg):
         print(f"📥 MQTT Received: Topic={topic_str}, Payload={payload_str}")
         
         payload = ujson.loads(payload_str)
-        target = payload.get("target_node")
-        command = payload.get("command")
-        routing_path = payload.get("routing_path", [])
-        args = payload.get("payload", {})
+        
+        # Check if it matches mobile app format: {"device_id": "...", "state": {"pump": "ON"}}
+        target = payload.get("device_id")
+        command = None
+        args = {}
+        routing_path = []
+        
+        if "state" in payload:
+            state_data = payload.get("state", {})
+            if "pump" in state_data:
+                if topic_str.startswith("valve/"):
+                    command = "VALVE_OPEN" if state_data["pump"] == "ON" else "VALVE_CLOSE"
+                else:
+                    command = "PUMP_ON" if state_data["pump"] == "ON" else "PUMP_OFF"
+            elif "valve" in state_data:
+                command = "VALVE_OPEN" if state_data["valve"] in ("OPEN", "ON") else "VALVE_CLOSE"
+            elif "hub_status" in state_data:
+                command = "HUB_ENABLE" if state_data["hub_status"] == "Enabled" else "HUB_DISABLE"
+            elif "command" in state_data:
+                command = state_data["command"]
+        elif "command" in payload:
+            command = payload.get("command")
+        else:
+            # Fallback for old/direct testing format
+            target = payload.get("target_node", target)
+            command = payload.get("command")
+            routing_path = payload.get("routing_path", [])
+            args = payload.get("payload", {})
+            
+        # Fallback to extract target from topic if missing
+        if not target and "/" in topic_str:
+            parts = topic_str.split("/")
+            if len(parts) >= 2:
+                target = parts[1]
         
         if not target or not command:
             print("⚠️ MQTT command payload missing target_node or command")
@@ -69,7 +99,9 @@ def mqtt_thread(heartbeats=None):
     topic_prefix = mqtt_cfg.get("topic_prefix", f"farm/{client_id}")
     
     cmd_topic = f"{topic_prefix}/command"
-    status_topic = f"{topic_prefix}/status"
+    # Status topic must match what mobile app subscribes to: {type}/{id}/status
+    client_type = cfg.get("client", {}).get("type", "hub").lower()
+    status_topic = f"{client_type}/{client_id}/status"
     
     while True:
         if heartbeats is not None:
@@ -99,7 +131,9 @@ def mqtt_thread(heartbeats=None):
                 
                 # Subscribe to command topic
                 _client.subscribe(cmd_topic.encode('utf-8'))
-                print(f"📡 Subscribed to command topic: {cmd_topic}")
+                _client.subscribe(b"pump/+/command")
+                _client.subscribe(b"valve/+/command")
+                print(f"📡 Subscribed to command topics: {cmd_topic}, pump/+/command, valve/+/command")
                 
                 # Publish startup status
                 publish_msg(status_topic, {

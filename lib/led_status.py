@@ -19,6 +19,8 @@ PATTERNS = {
     "OFF": ((0, 1000), (0, 1000)),
     "BLE_PROVISIONING": ((200, 200), (200, 200)),
     "WIFI_CONNECTING": ((100, 100), (0, 1000)),
+    "WIFI_CONNECTED": ((100, 1900), (0, 1000)),   # Short pulse — Wi-Fi up, MQTT pending
+    "MQTT_CONNECTED": ((1000, 0), (0, 1000)),     # Solid ON — fully operational
     "NORMAL_OFF": ((100, 2900), (0, 1000)),
     "VALVE_CLOSED": ((100, 2900), (0, 1000)),
     "VALVE_OPEN": ((1000, 1000), (0, 1000)),
