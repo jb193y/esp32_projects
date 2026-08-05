@@ -3,6 +3,7 @@ import machine
 import time
 import config
 import ubinascii
+import led_status
 
 try:
     import bluetooth
@@ -60,10 +61,18 @@ def irq_handler(event, data):
         conn_handle, addr_type, addr = data
         is_ble_connected = True
         print("🔗 BLE Central connected:", ubinascii.hexlify(addr).decode())
+        try:
+            led_status.set_status("BLE_CONNECTED")
+        except:
+            pass
     elif event == _IRQ_CENTRAL_DISCONNECT:
         conn_handle, addr_type, addr = data
         is_ble_connected = False
         print("🔌 BLE Central disconnected.")
+        try:
+            led_status.set_status("BLE_PROVISIONING")
+        except:
+            pass
         start_advertising()
     elif event == _IRQ_GATTS_WRITE:
         conn_handle, value_handle = data

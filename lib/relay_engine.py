@@ -1,7 +1,10 @@
 # relay_engine.py (Shared Relay Engine Library)
 import ujson
 import network
-import espnow
+try:
+    import espnow
+except ImportError:
+    espnow = None
 import config
 
 _e = None

@@ -1,6 +1,12 @@
 # esp_now_client.py (Shared ESP-NOW Client Library)
 import network
-import espnow
+try:
+    import espnow
+    has_espnow = True
+except ImportError:
+    espnow = None
+    has_espnow = False
+
 import ujson
 import time
 import config
@@ -111,6 +117,10 @@ def send_pairing_request():
 
 def init_espnow_client(on_cmd_received_fn=None):
     global _e
+    if not has_espnow:
+        print("⚠️ ESP-NOW not supported on this firmware build.")
+        return None
+
     cfg = config.load_config()
     client_name = cfg.get("client", {}).get("custom_name", "Client Node")
     print(f"🚀 Initializing {client_name} ESP-NOW Client...")

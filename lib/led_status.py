@@ -1,8 +1,14 @@
-# led_status.py (Shared LED Status Library)
+# led_status.py (Shared Universal LED Status Library)
 import _thread
 import time
 from machine import Pin
 import config
+
+try:
+    import neopixel
+    has_neopixel = True
+except ImportError:
+    has_neopixel = False
 
 _state = "OFF"
 _lock = _thread.allocate_lock()
@@ -17,7 +23,8 @@ def set_status(new_status):
 # Patterns: ((Run_ON, Run_OFF), (Fault_ON, Fault_OFF)) in ms
 PATTERNS = {
     "OFF": ((0, 1000), (0, 1000)),
-    "BLE_PROVISIONING": ((200, 200), (200, 200)),
+    "BLE_PROVISIONING": ((150, 150), (150, 150)),  # Rapid pairing blink
+    "BLE_CONNECTED": ((400, 100), (400, 100)),     # High-duty pulse when phone connected
     "WIFI_CONNECTING": ((100, 100), (0, 1000)),
     "WIFI_CONNECTED": ((100, 1900), (0, 1000)),   # Short pulse — Wi-Fi up, MQTT pending
     "MQTT_CONNECTED": ((1000, 0), (0, 1000)),     # Solid ON — fully operational
@@ -29,69 +36,101 @@ PATTERNS = {
     "RESTART_DELAY": ((500, 500), (0, 1000)),
 }
 
+# Color palette for NeoPixel RGB LEDs
+NEO_COLORS = {
+    "BLE_PROVISIONING": (0, 0, 255),    # Blue
+    "BLE_CONNECTED": (0, 255, 255),     # Cyan
+    "WIFI_CONNECTING": (255, 165, 0),   # Amber/Orange
+    "WIFI_CONNECTED": (0, 255, 0),      # Green
+    "MQTT_CONNECTED": (0, 255, 0),      # Green
+    "VALVE_OPEN": (0, 255, 0),          # Green
+    "VALVE_CLOSED": (50, 50, 50),       # Dim White
+    "RUNNING": (0, 255, 0),             # Green
+    "FAULT": (255, 0, 0),               # Red
+    "OFF": (0, 0, 0),
+}
+
 def led_thread():
-    print("✅ LED Status thread started")
+    print("✅ Universal LED Status thread started")
     cfg = config.load_config()
     client_cfg = cfg.get("client", {})
     client_type = client_cfg.get("type", "client").lower()
     
-    # Try type-specific pins first, then generic pins
     pins_cfg = cfg.get(client_type, {}).get("pins", {})
     if not pins_cfg:
         pins_cfg = client_cfg.get("pins", {})
         
-    run_pin_num = pins_cfg.get("led_run")
-    fault_pin_num = pins_cfg.get("led_fault")
-    status_pin_num = pins_cfg.get("status_led", 2) # default to GPIO 2 status LED
-    
-    # Detect mode
-    is_dual = (run_pin_num is not None) and (fault_pin_num is not None) and (run_pin_num != fault_pin_num)
-    
-    if is_dual:
-        print(f"💡 Dual LED Mode initialized: RUN={run_pin_num}, FAULT={fault_pin_num}")
-        led_run = Pin(run_pin_num, Pin.OUT)
-        led_fault = Pin(fault_pin_num, Pin.OUT)
+    status_pin_num = pins_cfg.get("status_led")
+
+    # Candidate GPIO pins for standard LEDs across ESP32 / ESP32-S3 boards
+    candidate_pins = [2, 21, 38, 47, 48]
+    if status_pin_num is not None and status_pin_num not in candidate_pins:
+        candidate_pins.insert(0, status_pin_num)
+
+    active_led_pins = []
+    for pin_num in candidate_pins:
+        try:
+            active_led_pins.append(Pin(pin_num, Pin.OUT))
+        except Exception:
+            pass
+
+    # Initialize NeoPixel RGB on GPIO 48 / 38 if available
+    np = None
+    if has_neopixel:
+        for neo_pin in [48, 38]:
+            try:
+                np = neopixel.NeoPixel(Pin(neo_pin), 1)
+                break
+            except Exception:
+                pass
+
+    print(f"💡 Universal LED Status Mode active: {len(active_led_pins)} GPIO pins, NeoPixel={np is not None}")
+
+    while True:
+        with _lock:
+            current_state = _state
+
+        run_pat, fault_pat = PATTERNS.get(current_state, ((100, 900), (0, 1000)))
         
-        while True:
-            with _lock:
-                current_state = _state
-                
-            run_pat, fault_pat = PATTERNS.get(current_state, ((100, 900), (0, 1000)))
-            run_on, run_off = run_pat
-            fault_on, fault_off = fault_pat
-            
-            if run_on > 0: led_run.value(1)
-            if fault_on > 0: led_fault.value(1)
-            
-            max_on = max(run_on, fault_on)
-            if max_on > 0:
-                time.sleep_ms(max_on)
-                
-            if run_on > 0: led_run.value(0)
-            if fault_on > 0: led_fault.value(0)
-            
-            max_off = max(run_off, fault_off)
-            if max_off > 0:
-                time.sleep_ms(max_off)
-    else:
-        print(f"💡 Single LED Mode initialized on GPIO {status_pin_num}")
-        led_status = Pin(status_pin_num, Pin.OUT)
-        
-        while True:
-            with _lock:
-                current_state = _state
-                
-            run_pat, fault_pat = PATTERNS.get(current_state, ((100, 900), (0, 1000)))
-            
-            # For single LED, use fault pattern if state is FAULT, otherwise run pattern
-            if current_state == "FAULT":
-                on_ms, off_ms = fault_pat
-            else:
-                on_ms, off_ms = run_pat
-                
-            if on_ms > 0:
-                led_status.value(1)
-                time.sleep_ms(on_ms)
-            if off_ms > 0:
-                led_status.value(0)
-                time.sleep_ms(off_ms)
+        if current_state == "FAULT":
+            on_ms, off_ms = fault_pat
+        else:
+            on_ms, off_ms = run_pat
+
+        neo_rgb = NEO_COLORS.get(current_state, (0, 0, 255))
+
+        if on_ms > 0:
+            # Turn ON standard LEDs
+            for p in active_led_pins:
+                try:
+                    p.value(1)
+                except Exception:
+                    pass
+
+            # Turn ON NeoPixel RGB LED
+            if np:
+                try:
+                    np[0] = neo_rgb
+                    np.write()
+                except Exception:
+                    pass
+
+            time.sleep_ms(on_ms)
+
+        if off_ms > 0:
+            # Turn OFF standard LEDs
+            for p in active_led_pins:
+                try:
+                    p.value(0)
+                except Exception:
+                    pass
+
+            # Turn OFF NeoPixel RGB LED
+            if np:
+                try:
+                    np[0] = (0, 0, 0)
+                    np.write()
+                except Exception:
+                    pass
+
+            time.sleep_ms(off_ms)
