@@ -1,0 +1,8 @@
+{
+  "client": {
+    "id": "valve_node_01",
+    "type": "VALVE",
+    "mode": "ble_setup",
+    "custom_name": "AgriPulse Valve Controller"
+  }
+}

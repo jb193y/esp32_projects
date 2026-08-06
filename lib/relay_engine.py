@@ -22,21 +22,17 @@ def init_relay_engine(espnow_instance):
 def add_peer_safe(e, peer_bytes):
     try:
         e.add_peer(peer_bytes)
-    except OSError as err:
-        if err.args[0] == 17: # EEXIST
+    except Exception as err:
+        err_str = str(err)
+        if "EXIST" in err_str or "17" in err_str or "116" in err_str or "12301" in err_str:
             return
-        print("⚠️ ESP-NOW Peer limit reached, cleaning up...")
         try:
-            peers = e.peers() if callable(getattr(e, 'peers', None)) else e.peers
-        except:
-            peers = []
-        if peers:
-            try:
-                e.del_peer(peers[0])
+            peers = e.get_peers() if hasattr(e, 'get_peers') else []
+            if peers:
+                e.del_peer(peers[0][0])
                 e.add_peer(peer_bytes)
-            except Exception as ex:
-                print("❌ Failed to resolve peer slots:", ex)
-                raise err
+        except Exception:
+            pass
 
 def process_and_relay(packet):
     """
@@ -45,7 +41,7 @@ def process_and_relay(packet):
     """
     global _e
     if _e is None:
-        print("❌ Relay engine not initialized with ESPNow")
+        print(" Relay engine not initialized with ESPNow")
         return False
         
     msg_type = packet.get("msg_type")
@@ -59,14 +55,14 @@ def process_and_relay(packet):
     
     # If the packet is targeted at us, return True immediately
     if target_mac and target_mac.upper() == local_mac.upper():
-        print("🎯 Packet reached final target destination.")
+        print(" Packet reached final target destination.")
         return True
         
     if not routing_path:
         return False
         
     if current_hop_index >= len(routing_path):
-        print("⚠️ current_hop_index out of routing path bounds")
+        print(" current_hop_index out of routing path bounds")
         return False
         
     current_hop_mac = routing_path[current_hop_index]
@@ -75,12 +71,12 @@ def process_and_relay(packet):
         return False
         
     if target_mac.upper() == local_mac.upper():
-        print("🎯 Packet reached final target destination.")
+        print(" Packet reached final target destination.")
         return True
         
     next_hop_index = current_hop_index + 1
     if next_hop_index >= len(routing_path):
-        print("⚠️ Cannot relay: current hop matches us, but no next hop in path and we are not the target")
+        print(" Cannot relay: current hop matches us, but no next hop in path and we are not the target")
         return False
         
     next_hop_mac = routing_path[next_hop_index]
@@ -88,13 +84,13 @@ def process_and_relay(packet):
     
     packet["current_hop_index"] = next_hop_index
     
-    print(f"🔄 Relaying packet to next hop: {next_hop_mac}")
+    print(f" Relaying packet to next hop: {next_hop_mac}")
     try:
         add_peer_safe(_e, next_hop_bytes)
         payload_str = ujson.dumps(packet)
         _e.send(next_hop_bytes, payload_str.encode('utf-8'))
-        print("✅ Packet relayed successfully.")
+        print(" Packet relayed successfully.")
     except Exception as e:
-        print(f"❌ Failed to relay packet to next hop: {e}")
+        print(f" Failed to relay packet to next hop: {e}")
         
     return False

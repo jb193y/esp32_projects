@@ -15,10 +15,13 @@ _lock = _thread.allocate_lock()
 
 def set_status(new_status):
     global _state
-    with _lock:
+    _lock.acquire()
+    try:
         if _state != new_status:
-            print(f"💡 LED Status -> {new_status}")
+            print(f" LED Status -> {new_status}")
             _state = new_status
+    finally:
+        _lock.release()
 
 # Patterns: ((Run_ON, Run_OFF), (Fault_ON, Fault_OFF)) in ms
 PATTERNS = {
@@ -26,8 +29,8 @@ PATTERNS = {
     "BLE_PROVISIONING": ((150, 150), (150, 150)),  # Rapid pairing blink
     "BLE_CONNECTED": ((400, 100), (400, 100)),     # High-duty pulse when phone connected
     "WIFI_CONNECTING": ((100, 100), (0, 1000)),
-    "WIFI_CONNECTED": ((100, 1900), (0, 1000)),   # Short pulse — Wi-Fi up, MQTT pending
-    "MQTT_CONNECTED": ((1000, 0), (0, 1000)),     # Solid ON — fully operational
+    "WIFI_CONNECTED": ((100, 1900), (0, 1000)),   # Short pulse  Wi-Fi up, MQTT pending
+    "MQTT_CONNECTED": ((1000, 0), (0, 1000)),     # Solid ON  fully operational
     "NORMAL_OFF": ((100, 2900), (0, 1000)),
     "VALVE_CLOSED": ((100, 2900), (0, 1000)),
     "VALVE_OPEN": ((1000, 1000), (0, 1000)),
@@ -51,7 +54,7 @@ NEO_COLORS = {
 }
 
 def led_thread():
-    print("✅ Universal LED Status thread started")
+    print(" Universal LED Status thread started")
     cfg = config.load_config()
     client_cfg = cfg.get("client", {})
     client_type = client_cfg.get("type", "client").lower()
@@ -84,11 +87,14 @@ def led_thread():
             except Exception:
                 pass
 
-    print(f"💡 Universal LED Status Mode active: {len(active_led_pins)} GPIO pins, NeoPixel={np is not None}")
+    print(f" Universal LED Status Mode active: {len(active_led_pins)} GPIO pins, NeoPixel={np is not None}")
 
     while True:
-        with _lock:
+        _lock.acquire()
+        try:
             current_state = _state
+        finally:
+            _lock.release()
 
         run_pat, fault_pat = PATTERNS.get(current_state, ((100, 900), (0, 1000)))
         

@@ -2,6 +2,8 @@
   "client": {
     "id": "valve_node_01",
     "type": "valve",
+    "controller_type": "YD-ESP32-S3 2022-V1.3",
+    "board_type": "YD-ESP32-S3 2022-V1.3",
     "custom_name": "AgriPulse Valve Controller",
     "firmware_version": "valve_v1.0.0",
     "mode": "ble_setup"

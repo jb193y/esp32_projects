@@ -42,16 +42,16 @@ def publish_hub_telemetry(status_val):
             "mode": "AUTO"
         }
         publish_msg(tele_topic, payload)
-        print(f"📊 Published Hub telemetry: {status_val} to {tele_topic}")
+        print(f"Published Hub telemetry: {status_val} to {tele_topic}")
     except Exception as e:
-        print("❌ Error publishing Hub telemetry:", e)
+        print("Error publishing Hub telemetry:", e)
 
 def on_message(topic, msg):
     global _cmd_dispatcher
     try:
         topic_str = topic.decode('utf-8')
         payload_str = msg.decode('utf-8')
-        print(f"📥 MQTT Received: Topic={topic_str}, Payload={payload_str}")
+        print(f"MQTT Received: Topic={topic_str}, Payload={payload_str}")
         
         payload = ujson.loads(payload_str)
         
@@ -90,42 +90,70 @@ def on_message(topic, msg):
                 target = parts[1]
         
         if not target or not command:
-            print("⚠️ MQTT command payload missing target_node or command")
+            print("MQTT command payload missing target_node or command")
             return
 
         cfg = config.load_config()
         client_id = cfg.get("client", {}).get("id", "hub_master_01")
+
+        # Instant MQTT Acknowledgment back to sender
+        resp_payload = {
+            "status": "RECEIVED_BY_HUB",
+            "target_node": target,
+            "command": command,
+            "timestamp": time.time(),
+            "hub_id": client_id
+        }
+        publish_msg(f"{topic_str}/response", resp_payload)
+        publish_msg(f"farm/{client_id}/command_response", resp_payload)
+        print(f"Published RECEIVED_BY_HUB ACK for {target}:{command}")
+
         if target == client_id:
             if command in ("HUB_ENABLE", "HUB_DISABLE"):
                 status_val = "Enabled" if command == "HUB_ENABLE" else "Disabled"
                 config.update_config({"client": {"status": status_val}})
                 publish_hub_telemetry(status_val)
+            elif command in ("BLINK_LED", "COM_TEST"):
+                print("Visual COM_TEST / BLINK_LED triggered on Hub!")
+                _thread.start_new_thread(_blink_hub_led_bg, ())
             return
-            
+
         if _cmd_dispatcher:
-            # Dispatch to ESP-NOW mesh
             _cmd_dispatcher(target, command, routing_path, args)
         else:
-            print("⚠️ No cmd_dispatcher registered")
+            print("No cmd_dispatcher registered")
     except Exception as e:
-        print("❌ Error processing MQTT message:", e)
+        print("Error processing MQTT message:", e)
+
+def _blink_hub_led_bg():
+    try:
+        prev_st = getattr(led_status, "_state", "MQTT_CONNECTED")
+        led_status.set_status("BLE_PROVISIONING")
+        time.sleep(3)
+        led_status.set_status(prev_st)
+        publish_hub_telemetry("BLINK_COMPLETE")
+    except Exception as ex:
+        print("Blink BG Error:", ex)
 
 def publish_msg(topic, payload, retain=False):
     global _client, _is_connected
     if not _is_connected or _client is None:
         return False
     try:
-        with _lock:
+        _lock.acquire()
+        try:
             _client.publish(topic.encode('utf-8'), ujson.dumps(payload).encode('utf-8'), retain=retain)
+        finally:
+            _lock.release()
         return True
     except Exception as e:
-        print("❌ MQTT publish error:", e)
+        print(" MQTT publish error:", e)
         _is_connected = False
         return False
 
 def mqtt_thread(heartbeats=None):
     global _client, _is_connected
-    print("🚀 MQTT Client Thread Started")
+    print(" MQTT Client Thread Started")
     
     cfg = config.load_config()
     mqtt_cfg = cfg.get("mqtt", {})
@@ -152,10 +180,11 @@ def mqtt_thread(heartbeats=None):
             
         if not _is_connected:
             try:
-                print(f"🔌 Connecting to MQTT Broker: {mqtt_cfg.get('server')}...")
+                broker_host = mqtt_cfg.get("server") or mqtt_cfg.get("broker") or "10.10.10.211"
+                print(f"Connecting to MQTT Broker: {broker_host}...")
                 _client = MQTTClient(
                     client_id=client_id,
-                    server=mqtt_cfg.get("server", "192.168.1.100"),
+                    server=broker_host,
                     port=mqtt_cfg.get("port", 1883),
                     user=mqtt_cfg.get("user", ""),
                     password=mqtt_cfg.get("password", ""),
@@ -165,20 +194,21 @@ def mqtt_thread(heartbeats=None):
                 _client.connect()
                 _is_connected = True
                 led_status.set_status("MQTT_CONNECTED")
-                print("✅ MQTT Connected!")
+                print(" MQTT Connected!")
                 
                 # Subscribe to command topics
                 _client.subscribe(cmd_topic.encode('utf-8'))
                 _client.subscribe(b"pump/+/command")
                 _client.subscribe(b"valve/+/command")
+                _client.subscribe(b"+/+/command")
+                _client.subscribe(b"+/+/+/+/command")
+                print(f" Subscribed to command topics: {cmd_topic}, pump/+/command, valve/+/command, +/+/command, +/+/+/+/command")
 
-                if location:
-                    _client.subscribe(f"{location}/+/hub/{client_id}/command".encode('utf-8'))
-                    _client.subscribe(f"{location}/+/pump/+/command".encode('utf-8'))
-                    _client.subscribe(f"{location}/+/valve/+/command".encode('utf-8'))
-                    print(f"📡 Subscribed to location-scoped topics for location '{location}'")
-                else:
-                    print(f"📡 Subscribed to legacy command topics: {cmd_topic}, pump/+/command, valve/+/command")
+                if hasattr(_client, 'sock') and _client.sock:
+                    try:
+                        _client.sock.setblocking(False)
+                    except Exception:
+                        pass
                 
                 # Publish startup status
                 publish_msg(status_topic, {
@@ -193,17 +223,19 @@ def mqtt_thread(heartbeats=None):
                 publish_hub_telemetry(hub_status)
                 
             except Exception as e:
-                print("❌ MQTT connection failed:", e)
+                print("MQTT connection failed:", e)
                 _is_connected = False
                 led_status.set_status("WIFI_CONNECTED")
                 time.sleep(10)
                 continue
                 
-        # Check for incoming messages
+        # Check for incoming messages non-blockingly
         try:
             _client.check_msg()
         except Exception as e:
-            print("⚠️ MQTT connection error check:", e)
-            _is_connected = False
+            err_num = getattr(e, 'errno', None)
+            if err_num not in (11, 110):
+                print("MQTT connection error check:", e)
+                _is_connected = False
             
-        time.sleep(0.5)
+        time.sleep(0.1)

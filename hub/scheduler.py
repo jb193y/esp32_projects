@@ -17,7 +17,7 @@ def init_scheduler():
     stab_delay = cfg.get("scheduler", {}).get("load_shedding_stabilization_delay_sec", 300)
     # Set initial stabilization delay on boot
     _stabilization_until = time.time() + stab_delay
-    print(f"⏰ Scheduler initialized. Power stabilization active until {time.time() + stab_delay} (in {stab_delay}s)")
+    print(f"Scheduler initialized. Power stabilization active until {time.time() + stab_delay} (in {stab_delay}s)")
 
 def queue_irrigation(node_id, deficit, duration_sec):
     global _queue
@@ -34,30 +34,30 @@ def queue_irrigation(node_id, deficit, duration_sec):
         
         # Sort queue by deficit value descending (highest deficit first)
         _queue.sort(key=lambda x: x[1], reverse=True)
-        print(f"📋 Irrigation Queued: {node_id} (Deficit={deficit}, Duration={duration_sec}s). Queue size={len(_queue)}")
+        print(f"Irrigation Queued: {node_id} (Deficit={deficit}, Duration={duration_sec}s). Queue size={len(_queue)}")
 
 def trigger_well_recharge():
     global _well_recharge_until
     cfg = config.load_config()
     delay = cfg.get("scheduler", {}).get("well_recharge_delay_sec", 1800)
     _well_recharge_until = time.time() + delay
-    print(f"⏳ Well recharge triggered. Pump locked for {delay} seconds.")
+    print(f"Well recharge triggered. Pump locked for {delay} seconds.")
 
 def check_pump_allowed():
     now = time.time()
     if now < _stabilization_until:
         remaining = int(_stabilization_until - now)
-        print(f"⚠️ Pump blocked: Grid stabilizing. Remaining: {remaining}s")
+        print(f"Pump blocked: Grid stabilizing. Remaining: {remaining}s")
         return False, f"stabilizing_{remaining}s"
     if now < _well_recharge_until:
         remaining = int(_well_recharge_until - now)
-        print(f"⚠️ Pump blocked: Well recharging. Remaining: {remaining}s")
+        print(f"Pump blocked: Well recharging. Remaining: {remaining}s")
         return False, f"recharging_{remaining}s"
     return True, "ready"
 
 def scheduler_thread(heartbeats=None, dispatch_fn=None):
     global _queue, _last_pump_stop_time
-    print("🚀 Scheduler Thread Started")
+    print("Scheduler Thread Started")
     init_scheduler()
     
     active_node = None
@@ -72,7 +72,7 @@ def scheduler_thread(heartbeats=None, dispatch_fn=None):
         # 1. Process active running zone
         if active_node is not None:
             if now >= active_end_time:
-                print(f"🛑 Irrigation cycle complete for node: {active_node}")
+                print(f"Irrigation cycle complete for node: {active_node}")
                 # Stop irrigation command to node
                 if dispatch_fn:
                     dispatch_fn(active_node, "PUMP_OFF", [])
@@ -92,13 +92,13 @@ def scheduler_thread(heartbeats=None, dispatch_fn=None):
             with _lock:
                 node_id, deficit, duration = _queue.pop(0)
                 
-            print(f"💧 Starting irrigation: {node_id} (Deficit={deficit}, Duration={duration}s)")
+            print(f"Starting irrigation: {node_id} (Deficit={deficit}, Duration={duration}s)")
             if dispatch_fn:
                 # Dispatch PUMP_ON to node
                 dispatch_fn(node_id, "PUMP_ON", [], {"duration": duration})
                 active_node = node_id
                 active_end_time = now + duration
             else:
-                print("⚠️ No dispatch function registered with scheduler")
+                print("No dispatch function registered with scheduler")
                 
         time.sleep(2)

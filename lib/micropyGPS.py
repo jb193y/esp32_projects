@@ -709,12 +709,12 @@ class MicropyGPS(object):
         """
         if self.coord_format == 'dd':
             formatted_latitude = self.latitude
-            lat_string = str(formatted_latitude[0]) + '° ' + str(self._latitude[2])
+            lat_string = str(formatted_latitude[0]) + ' ' + str(self._latitude[2])
         elif self.coord_format == 'dms':
             formatted_latitude = self.latitude
-            lat_string = str(formatted_latitude[0]) + '° ' + str(formatted_latitude[1]) + "' " + str(formatted_latitude[2]) + '" ' + str(formatted_latitude[3])
+            lat_string = str(formatted_latitude[0]) + ' ' + str(formatted_latitude[1]) + "' " + str(formatted_latitude[2]) + '" ' + str(formatted_latitude[3])
         else:
-            lat_string = str(self._latitude[0]) + '° ' + str(self._latitude[1]) + "' " + str(self._latitude[2])
+            lat_string = str(self._latitude[0]) + ' ' + str(self._latitude[1]) + "' " + str(self._latitude[2])
         return lat_string
 
     def longitude_string(self):
@@ -724,12 +724,12 @@ class MicropyGPS(object):
         """
         if self.coord_format == 'dd':
             formatted_longitude = self.longitude
-            lon_string = str(formatted_longitude[0]) + '° ' + str(self._longitude[2])
+            lon_string = str(formatted_longitude[0]) + ' ' + str(self._longitude[2])
         elif self.coord_format == 'dms':
             formatted_longitude = self.longitude
-            lon_string = str(formatted_longitude[0]) + '° ' + str(formatted_longitude[1]) + "' " + str(formatted_longitude[2]) + '" ' + str(formatted_longitude[3])
+            lon_string = str(formatted_longitude[0]) + ' ' + str(formatted_longitude[1]) + "' " + str(formatted_longitude[2]) + '" ' + str(formatted_longitude[3])
         else:
-            lon_string = str(self._longitude[0]) + '° ' + str(self._longitude[1]) + "' " + str(self._longitude[2])
+            lon_string = str(self._longitude[0]) + ' ' + str(self._longitude[1]) + "' " + str(self._longitude[2])
         return lon_string
 
     def speed_string(self, unit='kph'):

@@ -8,6 +8,7 @@ import config
 import led_status
 import ble_manager
 import esp_now_client
+import factory_reset
 
 # State
 valves = {}
@@ -20,7 +21,7 @@ def save_valve_states():
         with open("valve_states.json", "w") as f:
             ujson.dump(states, f)
     except Exception as e:
-        print("⚠️ Failed to save valve states:", e)
+        print(" Failed to save valve states:", e)
 
 def load_valve_states():
     try:
@@ -30,7 +31,7 @@ def load_valve_states():
             with open("valve_states.json", "r") as f:
                 return ujson.load(f)
     except Exception as e:
-        print("⚠️ Failed to load valve states:", e)
+        print(" Failed to load valve states:", e)
     return {}
 
 def update_valve_leds(valve_id):
@@ -71,16 +72,16 @@ def update_valve_leds(valve_id):
 def pulse_solenoid(valve_id="1", open_pulse=True):
     valve = valves.get(valve_id)
     if not valve:
-        print(f"🚰 Valve {valve_id} not found!")
+        print(f" Valve {valve_id} not found!")
         return
         
     open_pin = valve.get("solenoid_open_pin")
     close_pin = valve.get("solenoid_close_pin")
     if open_pin is None or close_pin is None:
-        print(f"🚰 Valve {valve_id} pins not configured!")
+        print(f" Valve {valve_id} pins not configured!")
         return
         
-    print(f"🚰 Solenoid Valve {valve_id} Action: {'OPENING' if open_pulse else 'CLOSING'} pulse starting...")
+    print(f" Solenoid Valve {valve_id} Action: {'OPENING' if open_pulse else 'CLOSING'} pulse starting...")
     
     open_pin.value(0)
     close_pin.value(0)
@@ -99,10 +100,10 @@ def pulse_solenoid(valve_id="1", open_pulse=True):
         
     update_valve_leds(valve_id)
     save_valve_states()
-    print(f"🚰 Solenoid Valve {valve_id} Action complete. State: {valve['state']}")
+    print(f" Solenoid Valve {valve_id} Action complete. State: {valve['state']}")
 
 def handle_hub_commands(cmd, args):
-    print(f"⚙️ Handling local command: {cmd} with args: {args}")
+    print(f" Handling local command: {cmd} with args: {args}")
     
     valve_id = "1"
     sender_mac = None
@@ -139,13 +140,33 @@ def handle_hub_commands(cmd, args):
             "valves": {vid: v["state"] for vid, v in valves.items()},
             "node_status": "active"
         }, target_mac=sender_mac)
+        
+    elif cmd in ("BLINK_LED", "COM_TEST"):
+        print("Visual COM_TEST / BLINK_LED triggered on Valve Controller!")
+        def _blink_valve_bg():
+            try:
+                prev_status = getattr(led_status, "_state", "VALVE_CLOSED")
+                led_status.set_status("BLE_PROVISIONING")
+                time.sleep(3)
+                led_status.set_status(prev_status)
+                esp_now_client.send_ack_or_tele_to_hub("ACK", {
+                    "status": "BLINK_COMPLETE",
+                    "cmd": cmd,
+                    "valves": {vid: v["state"] for vid, v in valves.items()},
+                    "node_status": "active"
+                }, target_mac=sender_mac)
+            except Exception as e:
+                print("Blink LED error:", e)
+        _thread.start_new_thread(_blink_valve_bg, ())
 
 def main():
     global last_telemetry_time
-    print("🚀 Valve Controller Starting...")
+    print(" Valve Controller Starting...")
     
     # 1. Start Status LED
     _thread.start_new_thread(led_status.led_thread, ())
+    time.sleep(0.2)
+    factory_reset.start()
     
     # 2. Load configurations
     cfg_exists = "config.json" in os.listdir()
@@ -157,7 +178,7 @@ def main():
             cfg = None
             
     if cfg is None:
-        print("⚠️ Configuration missing or corrupt! Falling back to BLE Provisioning Mode.")
+        print(" Configuration missing or corrupt! Falling back to BLE Provisioning Mode.")
         led_status.set_status("BLE_PROVISIONING")
         ble_manager.start_provisioning()
         return
@@ -166,13 +187,13 @@ def main():
     mode = client_cfg.get("mode", "ble_setup")
     
     if mode == "ble_setup":
-        print("📡 BLE Setup mode configured. Initializing provisioning...")
+        print(" BLE Setup mode configured. Initializing provisioning...")
         led_status.set_status("BLE_PROVISIONING")
         ble_manager.start_provisioning()
         return
 
     # 3. Start Normal Operations
-    print("📶 Loading Valve Outputs...")
+    print(" Loading Valve Outputs...")
     led_status.set_status("VALVE_CLOSED")
     
     valves_cfg = cfg.get("valves", [])
@@ -225,7 +246,7 @@ def main():
     heartbeats = {"esp_now": time.time()}
     _thread.start_new_thread(esp_now_client.client_listen_loop, (heartbeats, handle_hub_commands))
     
-    print("✅ Valve Node ready and running loop.")
+    print(" Valve Node ready and running loop.")
     
     while True:
         try:
@@ -246,9 +267,9 @@ def main():
                     })
                     
         except Exception as err:
-            print("⚠️ Valve Loop Error:", err)
+            print(" Valve Loop Error:", err)
             
-        time.sleep(1)
-
-if __name__ == "__main__":
+try:
     main()
+except Exception as e:
+    print(" Main loop error:", e)

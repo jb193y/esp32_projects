@@ -3,37 +3,58 @@ import machine
 import time
 import _thread
 import os
+import ujson
+import led_status
+import config
 
-BUTTON_PIN = 0  # Standard ESP32 BOOT button
-HOLD_TIME_MS = 5000
+HOLD_TIME_MS = 3000  # 3-second button hold for factory reset
 
 def monitor_thread():
-    button = machine.Pin(BUTTON_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
-    
-    # Wait until button is released (HIGH) before arming reset detection
-    # This prevents continuous reset loops if GPIO 0 is LOW during boot/powerup
-    while button.value() == 0:
-        time.sleep_ms(500)
-    
-    print("✅ Factory Reset button listener armed (waiting for 5s hold on GPIO 0)")
+    candidate_pins = [0, 48, 9, 47, 38, 21, 14]
+    button_pins = []
+
+    for pin_num in candidate_pins:
+        try:
+            p = machine.Pin(pin_num, machine.Pin.IN, machine.Pin.PULL_UP)
+            button_pins.append((pin_num, p))
+        except Exception:
+            pass
+
+    print(f" Factory Reset monitor armed on {len(button_pins)} pins (3s hold)")
 
     while True:
-        if button.value() == 0:  # Button is pressed
-            press_start = time.ticks_ms()
-            while button.value() == 0:
-                if time.ticks_diff(time.ticks_ms(), press_start) > HOLD_TIME_MS:
-                    print("⚠️ Factory Reset Button held for 5 seconds!")
-                    print("🧹 Wiping config.json...")
-                    try:
-                        os.remove("config.json")
-                    except OSError:
-                        pass
-                    print("🔄 Rebooting to BLE Provisioning mode...")
-                    time.sleep(1)
-                    machine.reset()
-                time.sleep_ms(100)
+        for pin_num, btn in button_pins:
+            if btn.value() == 0:  # Button pressed
+                press_start = time.ticks_ms()
+                while btn.value() == 0:
+                    held_ms = time.ticks_diff(time.ticks_ms(), press_start)
+                    if held_ms > 800:
+                        try:
+                            led_status.set_status("BLE_PROVISIONING")
+                        except Exception:
+                            pass
+
+                    if held_ms >= HOLD_TIME_MS:
+                        print(f" Factory Reset Button held for 3s on GPIO {pin_num}!")
+                        print(" Setting mode to ble_setup in config.json...")
+                        try:
+                            cfg = config.load_config()
+                            cfg.setdefault("client", {})["mode"] = "ble_setup"
+                            with open("config.json", "w") as f:
+                                ujson.dump(cfg, f)
+                        except Exception:
+                            try:
+                                os.remove("config.json")
+                            except Exception:
+                                pass
+                        
+                        print(" Rebooting to BLE Provisioning mode...")
+                        time.sleep(1)
+                        machine.reset()
+                    time.sleep_ms(100)
+
         time.sleep_ms(200)
 
 def start():
-    print(f"🔄 Factory Reset monitor started on GPIO {BUTTON_PIN}")
+    print(" Factory Reset monitor initializing...")
     _thread.start_new_thread(monitor_thread, ())

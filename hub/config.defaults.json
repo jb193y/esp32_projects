@@ -2,6 +2,8 @@
   "client": {
     "id": "hub_master_01",
     "type": "hub",
+    "controller_type": "ESP32-S3-DevKit v1.0",
+    "board_type": "ESP32-S3-DevKit v1.0",
     "custom_name": "AgriPulse Master Hub",
     "firmware_version": "hub_v1.0.0",
     "mode": "ble_setup"

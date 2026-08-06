@@ -37,8 +37,7 @@ def load_config():
     defaults = load_defaults()
     cfg = {}
     try:
-        if CONFIG_FILE in os.listdir():
-            cfg = _read_json(CONFIG_FILE)
+        cfg = _read_json(CONFIG_FILE)
     except Exception:
         cfg = {}
 
@@ -46,12 +45,6 @@ def load_config():
         cfg = {}
 
     cfg = _deep_merge(cfg, defaults)
-
-    try:
-        _write_json(CONFIG_FILE, cfg)
-    except Exception:
-        pass
-
     _cached_config = cfg
     return cfg
 
