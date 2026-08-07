@@ -41,15 +41,17 @@ PATTERNS = {
 
 # Color palette for NeoPixel RGB LEDs
 NEO_COLORS = {
-    "BLE_PROVISIONING": (0, 0, 255),    # Blue
+    "BLE_PROVISIONING": (0, 0, 255),    # Blue (Blinking)
     "BLE_CONNECTED": (0, 255, 255),     # Cyan
-    "WIFI_CONNECTING": (255, 165, 0),   # Amber/Orange
+    "WIFI_CONNECTING": (255, 165, 0),   # Orange
     "WIFI_CONNECTED": (0, 255, 0),      # Green
     "MQTT_CONNECTED": (0, 255, 0),      # Green
     "VALVE_OPEN": (0, 255, 0),          # Green
-    "VALVE_CLOSED": (50, 50, 50),       # Dim White
+    "VALVE_CLOSED": (0, 30, 0),         # Dim Green / Quiet
+    "NORMAL_OFF": (0, 30, 0),           # Dim Green / Quiet
     "RUNNING": (0, 255, 0),             # Green
     "FAULT": (255, 0, 0),               # Red
+    "RESTART_DELAY": (255, 165, 0),     # Orange
     "OFF": (0, 0, 0),
 }
 
@@ -65,6 +67,18 @@ def led_thread():
         
     status_pin_num = pins_cfg.get("status_led")
 
+    # Initialize NeoPixel RGB on GPIO 48 / 38 if available
+    np = None
+    neo_used_pin = None
+    if has_neopixel:
+        for neo_pin in [48, 38]:
+            try:
+                np = neopixel.NeoPixel(Pin(neo_pin), 1)
+                neo_used_pin = neo_pin
+                break
+            except Exception:
+                pass
+
     # Candidate GPIO pins for standard LEDs across ESP32 / ESP32-S3 boards
     candidate_pins = [2, 21, 38, 47, 48]
     if status_pin_num is not None and status_pin_num not in candidate_pins:
@@ -72,22 +86,14 @@ def led_thread():
 
     active_led_pins = []
     for pin_num in candidate_pins:
+        if pin_num == neo_used_pin:
+            continue  # Avoid pin conflict with NeoPixel RGB
         try:
             active_led_pins.append(Pin(pin_num, Pin.OUT))
         except Exception:
             pass
 
-    # Initialize NeoPixel RGB on GPIO 48 / 38 if available
-    np = None
-    if has_neopixel:
-        for neo_pin in [48, 38]:
-            try:
-                np = neopixel.NeoPixel(Pin(neo_pin), 1)
-                break
-            except Exception:
-                pass
-
-    print(f" Universal LED Status Mode active: {len(active_led_pins)} GPIO pins, NeoPixel={np is not None}")
+    print(f" Universal LED Status Mode active: {len(active_led_pins)} GPIO pins, NeoPixel={np is not None} (Pin {neo_used_pin})")
 
     while True:
         _lock.acquire()
@@ -103,7 +109,7 @@ def led_thread():
         else:
             on_ms, off_ms = run_pat
 
-        neo_rgb = NEO_COLORS.get(current_state, (0, 0, 255))
+        neo_rgb = NEO_COLORS.get(current_state, (0, 30, 0))
 
         if on_ms > 0:
             # Turn ON standard LEDs

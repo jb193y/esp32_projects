@@ -56,27 +56,39 @@ def add_peer_safe(e, peer_bytes):
                 print(" Failed to resolve peer slots:", ex)
                 raise err
 
+def parse_packet(payload_str):
+    p = ujson.loads(payload_str)
+    msg_type = p.get("msg_type") or p.get("t")
+    target_mac = p.get("target_mac") or p.get("dst", "")
+    routing_path = p.get("routing_path") or p.get("path", [])
+    current_hop_index = p.get("current_hop_index") if "current_hop_index" in p else p.get("hop", 0)
+    payload = p.get("payload") if "payload" in p else p.get("pld", {})
+    return {
+        "msg_type": msg_type,
+        "target_mac": target_mac,
+        "routing_path": routing_path,
+        "current_hop_index": current_hop_index,
+        "payload": payload
+    }
+
 def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
     global _e
     if _e is None:
         return False
-        
+
     cfg = config.load_config()
-    hub_mac_raw = cfg.get("hub", {}).get("mac", "")
-    if hub_mac_raw and len(hub_mac_raw.replace(":", "").replace("-", "")) == 12:
-        hub_mac_str = hub_mac_raw
-    else:
-        hub_mac_str = cfg.get("parent", {}).get("mac", "ff:ff:ff:ff:ff:ff")
-    dest_mac = target_mac if target_mac is not None else hub_mac_str
-    if dest_mac == "00:00:00:00:00:00":
-        dest_mac = "ff:ff:ff:ff:ff:ff"
+    hub_cfg = cfg.get("hub", {})
+    dest_mac = target_mac or hub_cfg.get("mac", "ff:ff:ff:ff:ff:ff")
     
-    if msg_type == "PAIR_REQ":
-        parent_mac_str = dest_mac
-    else:
-        parent_mac_str = cfg.get("parent", {}).get("mac", "00:00:00:00:00:00")
-        if parent_mac_str == "00:00:00:00:00:00":
-            parent_mac_str = dest_mac
+    if not dest_mac or dest_mac == "00:00:00:00:00:00":
+        parent_cfg = cfg.get("parent", {})
+        dest_mac = parent_cfg.get("mac", "ff:ff:ff:ff:ff:ff")
+        
+    if not dest_mac or dest_mac == "00:00:00:00:00:00":
+        dest_mac = "ff:ff:ff:ff:ff:ff"
+
+    parent_cfg = cfg.get("parent", {})
+    parent_mac_str = parent_cfg.get("mac", "00:00:00:00:00:00")
     
     routing_path = []
     if parent_mac_str != "00:00:00:00:00:00" and parent_mac_str != dest_mac:
@@ -85,12 +97,13 @@ def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
         routing_path = [dest_mac]
         
     packet = {
-        "msg_type": msg_type,
-        "target_mac": dest_mac,
-        "routing_path": routing_path,
-        "current_hop_index": 0,
-        "payload": payload
+        "t": msg_type,
+        "dst": dest_mac,
+        "pld": payload
     }
+    if len(routing_path) > 1:
+        packet["path"] = routing_path
+        packet["hop"] = 0
     
     next_hop = routing_path[0]
     next_hop_bytes = mac_to_bytes(next_hop)
@@ -187,7 +200,7 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                 payload_str = msg.decode('utf-8')
                 print(f" Received packet from {sender_mac}: {payload_str}")
                 
-                packet = ujson.loads(payload_str)
+                packet = parse_packet(payload_str)
                 msg_type = packet.get("msg_type")
                 target_mac = packet.get("target_mac")
                 

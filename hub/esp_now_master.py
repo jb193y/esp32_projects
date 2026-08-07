@@ -71,6 +71,21 @@ def add_peer_safe(e, peer_bytes):
             except Exception as ex:
                 print("Failed to resolve peer slots:", ex)
 
+def parse_packet(payload_str):
+    p = ujson.loads(payload_str)
+    msg_type = p.get("msg_type") or p.get("t")
+    target_mac = p.get("target_mac") or p.get("dst", "")
+    routing_path = p.get("routing_path") or p.get("path", [])
+    current_hop_index = p.get("current_hop_index") if "current_hop_index" in p else p.get("hop", 0)
+    payload = p.get("payload") if "payload" in p else p.get("pld", {})
+    return {
+        "msg_type": msg_type,
+        "target_mac": target_mac,
+        "routing_path": routing_path,
+        "current_hop_index": current_hop_index,
+        "payload": payload
+    }
+
 def send_espnow_msg(target_mac_str, msg_dict, routing_path=None):
     global _e
     if _e is None:
@@ -81,12 +96,13 @@ def send_espnow_msg(target_mac_str, msg_dict, routing_path=None):
         routing_path = [target_mac_str]
 
     packet = {
-        "msg_type": msg_dict.get("msg_type", "CMD"),
-        "target_mac": target_mac_str,
-        "routing_path": routing_path,
-        "current_hop_index": 0,
-        "payload": msg_dict.get("payload", {})
+        "t": msg_dict.get("msg_type", "CMD"),
+        "dst": target_mac_str,
+        "pld": msg_dict.get("payload", {})
     }
+    if len(routing_path) > 1:
+        packet["path"] = routing_path
+        packet["hop"] = 0
 
     next_hop_mac_str = routing_path[0]
     next_hop_bytes = mac_to_bytes(next_hop_mac_str)
@@ -236,7 +252,7 @@ def espnow_receiver_thread(heartbeats=None):
             payload_str = msg.decode('utf-8')
             print(f"ESP-NOW Raw packet from {sender_mac_str}: {payload_str}")
 
-            packet = ujson.loads(payload_str)
+            packet = parse_packet(payload_str)
             msg_type = packet.get("msg_type")
             target_mac = packet.get("target_mac", "")
             payload = packet.get("payload", {})

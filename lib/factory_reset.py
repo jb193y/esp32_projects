@@ -10,7 +10,8 @@ import config
 HOLD_TIME_MS = 3000  # 3-second button hold for factory reset
 
 def monitor_thread():
-    candidate_pins = [0, 48, 9, 47, 38, 21, 14]
+    # Only monitor dedicated BOOT button on GPIO 0 (avoid conflicts with solenoid/relay pins 9, 14, 21, 47)
+    candidate_pins = [0]
     button_pins = []
 
     for pin_num in candidate_pins:

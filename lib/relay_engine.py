@@ -34,6 +34,21 @@ def add_peer_safe(e, peer_bytes):
         except Exception:
             pass
 
+def parse_packet(payload_str):
+    p = ujson.loads(payload_str)
+    msg_type = p.get("msg_type") or p.get("t")
+    target_mac = p.get("target_mac") or p.get("dst", "")
+    routing_path = p.get("routing_path") or p.get("path", [])
+    current_hop_index = p.get("current_hop_index") if "current_hop_index" in p else p.get("hop", 0)
+    payload = p.get("payload") if "payload" in p else p.get("pld", {})
+    return {
+        "msg_type": msg_type,
+        "target_mac": target_mac,
+        "routing_path": routing_path,
+        "current_hop_index": current_hop_index,
+        "payload": payload
+    }
+
 def process_and_relay(packet):
     """
     Evaluates packet routing.
@@ -44,10 +59,10 @@ def process_and_relay(packet):
         print(" Relay engine not initialized with ESPNow")
         return False
         
-    msg_type = packet.get("msg_type")
-    target_mac = packet.get("target_mac")
-    routing_path = packet.get("routing_path", [])
-    current_hop_index = packet.get("current_hop_index", 0)
+    msg_type = packet.get("msg_type") or packet.get("t")
+    target_mac = packet.get("target_mac") or packet.get("dst")
+    routing_path = packet.get("routing_path") or packet.get("path", [])
+    current_hop_index = packet.get("current_hop_index") if "current_hop_index" in packet else packet.get("hop", 0)
     payload = packet.get("payload", {})
     
     sta = network.WLAN(network.STA_IF)

@@ -76,6 +76,11 @@ def on_message(topic, msg):
                 command = state_data["command"]
         elif "command" in payload:
             command = payload.get("command")
+            target = payload.get("target_node") or target
+            routing_path = payload.get("routing_path", [])
+            args = {k: v for k, v in payload.items() if k not in ("command", "target_node", "routing_path")}
+            if "payload" in payload and isinstance(payload["payload"], dict):
+                args.update(payload["payload"])
         else:
             # Fallback for old/direct testing format
             target = payload.get("target_node", target)
