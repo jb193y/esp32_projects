@@ -14,6 +14,9 @@ import factory_reset
 valves = {}
 last_telemetry_time = 0
 
+# Non-blocking command queue — receive thread enqueues, main loop executes
+_cmd_queue = []
+
 def save_valve_states():
     try:
         import ujson
@@ -103,8 +106,17 @@ def pulse_solenoid(valve_id="1", open_pulse=True):
     print(f" Solenoid Valve {valve_id} Action complete. State: {valve['state']}")
 
 def handle_hub_commands(cmd, args):
-    print(f" Handling local command: {cmd} with args: {args}")
-    
+    # Non-blocking: just enqueue the command for the main loop to execute.
+    # This keeps the ESP-NOW receive thread free to accept the next packet
+    # immediately, preventing dropped commands during solenoid pulses.
+    print(f" Queuing command: {cmd} with args: {args}")
+    _cmd_queue.append((cmd, args))
+
+
+def execute_command(cmd, args):
+    """Called from the main loop — safe to block here."""
+    print(f" Executing command: {cmd} with args: {args}")
+
     valve_id = "1"
     sender_mac = None
     if isinstance(args, dict):
@@ -118,7 +130,7 @@ def handle_hub_commands(cmd, args):
             sender_mac = parsed.get("sender_mac")
         except:
             pass
-            
+
     if cmd == "VALVE_OPEN":
         pulse_solenoid(valve_id, open_pulse=True)
         esp_now_client.send_ack_or_tele_to_hub("ACK", {
@@ -126,7 +138,7 @@ def handle_hub_commands(cmd, args):
             "valves": {vid: v["state"] for vid, v in valves.items()},
             "node_status": "active"
         }, target_mac=sender_mac)
-        
+
     elif cmd == "VALVE_CLOSE":
         pulse_solenoid(valve_id, open_pulse=False)
         esp_now_client.send_ack_or_tele_to_hub("ACK", {
@@ -134,13 +146,40 @@ def handle_hub_commands(cmd, args):
             "valves": {vid: v["state"] for vid, v in valves.items()},
             "node_status": "active"
         }, target_mac=sender_mac)
-        
+
+    elif cmd == "VALVE_ENABLE":
+        valve = valves.get(valve_id)
+        if valve:
+            valve["enabled"] = True
+            save_valve_states()
+        esp_now_client.send_ack_or_tele_to_hub("ACK", {
+            "valve_id": valve_id,
+            "status": "ENABLED",
+            "valves": {vid: v["state"] for vid, v in valves.items()},
+            "node_status": "active"
+        }, target_mac=sender_mac)
+
+    elif cmd == "VALVE_DISABLE":
+        valve = valves.get(valve_id)
+        if valve:
+            valve["enabled"] = False
+            if valve.get("state") == "OPEN":
+                pulse_solenoid(valve_id, open_pulse=False)
+            valve["state"] = "DISABLED"
+            save_valve_states()
+        esp_now_client.send_ack_or_tele_to_hub("ACK", {
+            "valve_id": valve_id,
+            "status": "DISABLED",
+            "valves": {vid: v["state"] for vid, v in valves.items()},
+            "node_status": "active"
+        }, target_mac=sender_mac)
+
     elif cmd == "GET_STATUS":
         esp_now_client.send_ack_or_tele_to_hub("ACK", {
             "valves": {vid: v["state"] for vid, v in valves.items()},
             "node_status": "active"
         }, target_mac=sender_mac)
-        
+
     elif cmd in ("BLINK_LED", "COM_TEST"):
         print("Visual COM_TEST / BLINK_LED triggered on Valve Controller!")
         def _blink_valve_bg():
@@ -251,7 +290,12 @@ def main():
     while True:
         try:
             gc.collect()
-            
+
+            # Drain command queue — execute one command per loop tick
+            if _cmd_queue:
+                cmd, args = _cmd_queue.pop(0)
+                execute_command(cmd, args)
+
             # Send periodic telemetry if paired
             if esp_now_client.is_paired():
                 now = time.time()
@@ -265,7 +309,7 @@ def main():
                         "valves": {vid: v["state"] for vid, v in valves.items()},
                         "rssi": -50
                     })
-                    
+
         except Exception as err:
             print(" Valve Loop Error:", err)
             

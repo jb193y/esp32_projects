@@ -74,6 +74,9 @@ def on_message(topic, msg):
                 command = "HUB_ENABLE" if state_data["hub_status"] == "Enabled" else "HUB_DISABLE"
             elif "command" in state_data:
                 command = state_data["command"]
+                # Extract target_node and all extra fields (valve_id, etc.) from state_data
+                target = state_data.get("target_node") or target
+                args = {k: v for k, v in state_data.items() if k not in ("command", "target_node")}
         elif "command" in payload:
             command = payload.get("command")
             target = payload.get("target_node") or target
@@ -88,7 +91,7 @@ def on_message(topic, msg):
             routing_path = payload.get("routing_path", [])
             args = payload.get("payload", {})
             
-        # Fallback to extract target from topic if missing
+        # Fallback to extract target from topic if still missing
         if not target and "/" in topic_str:
             parts = topic_str.split("/")
             if len(parts) >= 2:
@@ -205,9 +208,7 @@ def mqtt_thread(heartbeats=None):
                 _client.subscribe(cmd_topic.encode('utf-8'))
                 _client.subscribe(b"pump/+/command")
                 _client.subscribe(b"valve/+/command")
-                _client.subscribe(b"+/+/command")
-                _client.subscribe(b"+/+/+/+/command")
-                print(f" Subscribed to command topics: {cmd_topic}, pump/+/command, valve/+/command, +/+/command, +/+/+/+/command")
+                print(f" Subscribed to clean command topics: {cmd_topic}, pump/+/command, valve/+/command")
 
                 if hasattr(_client, 'sock') and _client.sock:
                     try:

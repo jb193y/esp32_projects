@@ -149,8 +149,33 @@ def dispatch_command_from_mqtt(target_node, command, routing_path, args):
         return
 
     nodes = load_nodes()
-    target_mac_str = None
+    cfg = config.load_config()
+    client_id = cfg.get("client", {}).get("id", "hub_master_01")
 
+    # Support target_node == "all" to send commands to all registered nodes
+    if target_node.lower() in ("all", "broadcast", "*"):
+        print(f" Broadcast Command '{command}' to ALL {len(nodes)} registered nodes")
+        fwd_payload = {
+            "status": "FORWARDING_TO_ALL",
+            "target_node": "all",
+            "command": command,
+            "timestamp": time.time(),
+            "hub_id": client_id
+        }
+        mqtt_client.publish_msg(f"farm/{client_id}/command_response", fwd_payload)
+
+        payload = {"cmd": command}
+        payload.update(args)
+
+        if len(nodes) == 0:
+            # Fallback to ESP-NOW hardware broadcast if nodes registry is empty
+            send_espnow_msg("ff:ff:ff:ff:ff:ff", {"msg_type": "CMD", "payload": payload})
+        else:
+            for mac_addr in nodes.keys():
+                send_espnow_msg(mac_addr, {"msg_type": "CMD", "payload": payload})
+        return
+
+    target_mac_str = None
     if ":" in target_node:
         target_mac_str = target_node
     else:

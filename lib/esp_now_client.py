@@ -255,7 +255,7 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                 else:
                     is_for_us = relay_engine.process_and_relay(packet)
                     
-                if is_for_us and on_cmd_received_fn is not None:
+                if is_for_us and msg_type == "CMD" and on_cmd_received_fn is not None:
                     payload = packet.get("payload", {})
                     cmd = payload.get("cmd")
                     
