@@ -27,14 +27,15 @@ def publish_hub_telemetry(status_val):
         client = cfg.get("client", {})
         client_id = client.get("id", "hub_master_01")
         client_type = client.get("type", "hub").lower()
-        location = client.get("location")
+        location = client.get("location", "default_location")
         group = client.get("group", "all")
         
-        if location:
-            tele_topic = f"{location}/{group}/{client_type}/{client_id}/telemetry"
-        else:
-            tele_topic = f"{client_type}/{client_id}/telemetry"
+        if location == "default_location":
+            print("ERROR: 'location' not set in config. Cannot publish hub telemetry.")
+            return
         
+        tele_topic = f"{location}/{group}/{client_type}/{client_id}/telemetry"
+
         payload = {
             "timestamp": time.time(),
             "hub_status": status_val,
@@ -168,14 +169,12 @@ def mqtt_thread(heartbeats=None):
     client_info = cfg.get("client", {})
     client_id = client_info.get("id", "hub_master_01")
     client_type = client_info.get("type", "hub").lower()
-    location = client_info.get("location")
+    location = client_info.get("location", "default_location")
     group = client_info.get("group", "all")
     
-    topic_prefix = mqtt_cfg.get("topic_prefix", f"farm/{client_id}")
-    cmd_topic = f"{topic_prefix}/command"
-    status_topic = f"{client_type}/{client_id}/status"
-    if location:
-        status_topic = f"{location}/{group}/{client_type}/{client_id}/status"
+    # The hub's own command topic, using the new namespaced format
+    cmd_topic = f"{location}/{group}/{client_type}/{client_id}/command"
+    status_topic = f"{location}/{group}/{client_type}/{client_id}/status"
     
     while True:
         if heartbeats is not None:
@@ -206,9 +205,10 @@ def mqtt_thread(heartbeats=None):
                 
                 # Subscribe to command topics
                 _client.subscribe(cmd_topic.encode('utf-8'))
-                _client.subscribe(b"pump/+/command")
-                _client.subscribe(b"valve/+/command")
-                print(f" Subscribed to clean command topics: {cmd_topic}, pump/+/command, valve/+/command")
+                # Subscribe to all pump and valve commands using the new namespaced format
+                _client.subscribe(b"+/+/pump/+/command")
+                _client.subscribe(b"+/+/valve/+/command")
+                print(f" Subscribed to namespaced command topics: {cmd_topic}, +/+/pump/+/command, ...")
 
                 if hasattr(_client, 'sock') and _client.sock:
                     try:
@@ -217,12 +217,15 @@ def mqtt_thread(heartbeats=None):
                         pass
                 
                 # Publish startup status
-                publish_msg(status_topic, {
-                    "client_id": client_id,
-                    "status": "online",
-                    "timestamp": time.time(),
-                    "fw_ver": cfg.get("client", {}).get("firmware_version", "hub_v1.0.0")
-                }, retain=True)
+                if location != "default_location":
+                    publish_msg(status_topic, {
+                        "client_id": client_id,
+                        "status": "online",
+                        "timestamp": time.time(),
+                        "fw_ver": cfg.get("client", {}).get("firmware_version", "hub_v1.0.0")
+                    }, retain=True)
+                else:
+                    print("ERROR: 'location' not set in config. Cannot publish hub status.")
                 
                 # Publish initial Hub status telemetry
                 hub_status = cfg.get("client", {}).get("status", "Enabled")
