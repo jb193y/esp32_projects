@@ -1,22 +1,22 @@
-# Inter-Device Association & Pairing Flow
+# Device Association & Pairing Flow
 
-This document details the handshake sequence for connecting new field nodes (Pump Controller or Valve Controller) to the Master Hub Central Controller.
+This document details the handshake sequence for connecting new field devices (acting as ESP-NOW nodes) to the Master Hub.
 
 ## Sequence Diagram
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor App as Mobile App / User
+    actor User as Mobile App / User
     participant Node as Field Node (Pump/Valve)
     participant Hub as Master Hub
     participant MQTT as Cloud MQTT Broker
 
     Note over Node: Node has missing/corrupt config.json
     Node->>Node: Boot into BLE Provisioning Mode
-    Node-->>App: Broadcast Service (0000ffe0...)
+    Node-->>User: Broadcast Service (0000ffe0...)
     
-    App->>Node: Connect & Write Hub MAC Address via BLE
+    User->>Node: Connect & Write Hub MAC Address via BLE
     Note over Node: Save settings to config.json
     Node->>Node: machine.reset() & Reboot
     
@@ -24,16 +24,16 @@ sequenceDiagram
     Node->>Node: Initialize ESP-NOW Radio
     
     loop Pairing Request Retry
-        Node->>Hub: ESP-NOW: PAIR_REQ {"node_type": "PUMP"|"VALVE", "custom_name": "..."}
+        Node->>Hub: ESP-NOW: PAIR_REQ {"node_type": "PUMP"|"VALVE", "device_id": "...", "custom_name": "..."}
     end
     
     Hub->>Hub: Parse & Verify PAIR_REQ
-    Hub->>Hub: Dynamically append node MAC to nodes.json registry
+    Hub->>Hub: Add node MAC and device_id to nodes.json registry
     Hub->>Node: ESP-NOW: ACK {"status": "paired", "hub_mac": "..."}
     Note over Node: Node marks state as paired, stops retries
     
     Hub->>MQTT: Publish topic: farm/config/new_node_added
-    Note over MQTT: Cloud Backend / Mobile App receives node confirmation
+    Note over MQTT: Cloud Backend / Mobile App receives new device confirmation
 ```
 
 ---

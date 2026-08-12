@@ -308,13 +308,14 @@ def espnow_receiver_thread(heartbeats=None):
 
                 # Publish retained status so the mobile app "waiting" screen resolves
                 type_slug = node_type.lower()
-                node_id_slug = node_info.get("node_id", "").lower() or sender_mac_str.replace(':', '')
+                device_id = node_info.get("node_id", "").lower() or sender_mac_str.replace(':', '')
 
                 cfg = config.load_config()
                 location = cfg.get("client", {}).get("location", "default_location")
                 group = cfg.get("client", {}).get("group", "all")
 
                 status_payload = {
+                    "device_id": device_id,
                     "status": "online",
                     "node_type": node_type,
                     "mac": sender_mac_str,
@@ -326,15 +327,15 @@ def espnow_receiver_thread(heartbeats=None):
                     continue
 
                 # Publish to new namespaced topic only
-                status_topic = f"{location}/{group}/{type_slug}/{node_id_slug}/status"
+                status_topic = f"{location}/{group}/{type_slug}/{device_id}/status"
                 mqtt_client.publish_msg(status_topic, status_payload, retain=True)
-                print(f"Published device online status for {node_id_slug}")
+                print(f"Published device online status for {device_id}")
 
                 # Also notify on discovery topic
                 mqtt_client.publish_msg("farm/config/new_node_added", {
                     "mac": sender_mac_str,
-                    "node_type": node_type,
-                    "node_id": node_id_slug,
+                    "device_type": node_type,
+                    "device_id": device_id,
                     "custom_name": node_info["custom_name"]
                 })
 
@@ -351,9 +352,10 @@ def espnow_receiver_thread(heartbeats=None):
                 nodes = load_nodes()
                 node_info = nodes.get(sender_mac_str, {})
                 node_type = node_info.get("node_type", "node").lower()
-                node_id = node_info.get("node_id", sender_mac_str.replace(':', '')).lower()
-                tele_topic = f"{location}/{group}/{node_type}/{node_id}/telemetry"
+                device_id = node_info.get("node_id", sender_mac_str.replace(':', '')).lower()
+                tele_topic = f"{location}/{group}/{node_type}/{device_id}/telemetry"
                 tele_payload = payload.copy() if isinstance(payload, dict) else {"data": payload}
+                tele_payload["device_id"] = device_id
                 tele_payload["node_mac"] = sender_mac_str
                 mqtt_client.publish_msg(tele_topic, tele_payload)
 
@@ -371,20 +373,20 @@ def espnow_receiver_thread(heartbeats=None):
 
                 node_info = nodes.get(sender_mac_str, {})
                 node_type = node_info.get("node_type", "node").lower()
-                node_id = node_info.get("node_id", sender_mac_str.replace(':', '')).lower()
+                device_id = node_info.get("node_id", sender_mac_str.replace(':', '')).lower()
                 
                 exec_payload = {
                     "status": "EXECUTED_BY_NODE",
-                    "target_node": node_id,
+                    "device_id": device_id,
                     "node_mac": sender_mac_str,
                     "ack_data": payload,
                     "timestamp": time.time()
                 }
                 # Publish to new namespaced topics
-                mqtt_client.publish_msg(f"{location}/{group}/{node_type}/{node_id}/command/response", exec_payload)
-                mqtt_client.publish_msg(f"{location}/{group}/{node_type}/{node_id}/acks", exec_payload)
+                mqtt_client.publish_msg(f"{location}/{group}/{node_type}/{device_id}/command/response", exec_payload)
+                mqtt_client.publish_msg(f"{location}/{group}/{node_type}/{device_id}/acks", exec_payload)
                 mqtt_client.publish_msg(f"farm/{client_id}/command_response", exec_payload)
-                print(f"Published EXECUTED_BY_NODE ACK for {node_id}")
+                print(f"Published EXECUTED_BY_NODE ACK for {device_id}")
 
             elif msg_type == "ALERT":
                 print(f"ALERT received from {sender_mac_str}!")
@@ -399,9 +401,12 @@ def espnow_receiver_thread(heartbeats=None):
 
                 node_info = nodes.get(sender_mac_str, {})
                 node_type = node_info.get("node_type", "node").lower()
-                node_id = node_info.get("node_id", sender_mac_str.replace(':', '')).lower()
-                alert_topic = f"{location}/{group}/{node_type}/{node_id}/alerts"
-                alert_payload = {"node_mac": sender_mac_str, **payload}
+                device_id = node_info.get("node_id", sender_mac_str.replace(':', '')).lower()
+                alert_topic = f"{location}/{group}/{node_type}/{device_id}/alerts"
+                alert_payload = payload.copy() if isinstance(payload, dict) else {"data": payload}
+                alert_payload["device_id"] = device_id
+                alert_payload["device_type"] = node_type.upper()
+                alert_payload["node_mac"] = sender_mac_str
                 mqtt_client.publish_msg(alert_topic, alert_payload)
 
         except Exception as e:

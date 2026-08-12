@@ -57,7 +57,7 @@ def on_message(topic, msg):
         payload = ujson.loads(payload_str)
         
         # Check if it matches mobile app format: {"device_id": "...", "state": {"pump": "ON"}}
-        target = payload.get("device_id")
+        target_device = payload.get("device_id")
         command = None
         args = {}
         routing_path = []
@@ -76,30 +76,30 @@ def on_message(topic, msg):
             elif "command" in state_data:
                 command = state_data["command"]
                 # Extract target_node and all extra fields (valve_id, etc.) from state_data
-                target = state_data.get("target_node") or target
-                args = {k: v for k, v in state_data.items() if k not in ("command", "target_node")}
+                target_device = state_data.get("target_device_id") or state_data.get("target_node") or target_device
+                args = {k: v for k, v in state_data.items() if k not in ("command", "target_node", "target_device_id")}
         elif "command" in payload:
             command = payload.get("command")
-            target = payload.get("target_node") or target
+            target_device = payload.get("target_device_id") or payload.get("target_node") or target_device
             routing_path = payload.get("routing_path", [])
-            args = {k: v for k, v in payload.items() if k not in ("command", "target_node", "routing_path")}
+            args = {k: v for k, v in payload.items() if k not in ("command", "target_node", "target_device_id", "routing_path")}
             if "payload" in payload and isinstance(payload["payload"], dict):
                 args.update(payload["payload"])
         else:
             # Fallback for old/direct testing format
-            target = payload.get("target_node", target)
+            target_device = payload.get("target_node", target_device) # Keep 'target_node' for backward compatibility
             command = payload.get("command")
             routing_path = payload.get("routing_path", [])
             args = payload.get("payload", {})
             
         # Fallback to extract target from topic if still missing
-        if not target and "/" in topic_str:
+        if not target_device and "/" in topic_str:
             parts = topic_str.split("/")
-            if len(parts) >= 2:
-                target = parts[1]
+            if len(parts) >= 4 and parts[-1] == "command": # e.g. location/group/pump/device123/command
+                target_device = parts[-2]
         
-        if not target or not command:
-            print("MQTT command payload missing target_node or command")
+        if not target_device or not command:
+            print("MQTT command payload missing target_device_id or command")
             return
 
         cfg = config.load_config()
@@ -108,16 +108,16 @@ def on_message(topic, msg):
         # Instant MQTT Acknowledgment back to sender
         resp_payload = {
             "status": "RECEIVED_BY_HUB",
-            "target_node": target,
+            "target_device_id": target_device,
             "command": command,
             "timestamp": time.time(),
             "hub_id": client_id
         }
         publish_msg(f"{topic_str}/response", resp_payload)
         publish_msg(f"farm/{client_id}/command_response", resp_payload)
-        print(f"Published RECEIVED_BY_HUB ACK for {target}:{command}")
+        print(f"Published RECEIVED_BY_HUB ACK for {target_device}:{command}")
 
-        if target == client_id:
+        if target_device == client_id:
             if command in ("HUB_ENABLE", "HUB_DISABLE"):
                 status_val = "Enabled" if command == "HUB_ENABLE" else "Disabled"
                 config.update_config({"client": {"status": status_val}})
@@ -128,7 +128,7 @@ def on_message(topic, msg):
             return
 
         if _cmd_dispatcher:
-            _cmd_dispatcher(target, command, routing_path, args)
+            _cmd_dispatcher(target_device, command, routing_path, args)
         else:
             print("No cmd_dispatcher registered")
     except Exception as e:
