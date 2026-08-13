@@ -37,16 +37,21 @@ def add_peer_safe(e, peer_bytes):
 def parse_packet(payload_str):
     p = ujson.loads(payload_str)
     msg_type = p.get("msg_type") or p.get("t")
-    target_mac = p.get("target_mac") or p.get("dst", "")
-    routing_path = p.get("routing_path") or p.get("path", [])
-    current_hop_index = p.get("current_hop_index") if "current_hop_index" in p else p.get("hop", 0)
-    payload = p.get("payload") if "payload" in p else p.get("pld", {})
+    target = p.get("target") or p.get("dst", "")
+    source = p.get("source")
+    route = p.get("route", {})
+    hops = route.get("hops", p.get("routing_path", p.get("path", [])))
+    current_hop_index = route.get("current_hop_index", p.get("current_hop_index", p.get("hop", 0)))
+    data = p.get("data", p.get("payload", p.get("pld", {})))
     return {
         "msg_type": msg_type,
-        "target_mac": target_mac,
-        "routing_path": routing_path,
+        "target": target,
+        "source": source,
+        "route": route,
+        "hops": hops,
         "current_hop_index": current_hop_index,
-        "payload": payload
+        "data": data,
+        "raw": p
     }
 
 def process_and_relay(packet):
@@ -59,53 +64,67 @@ def process_and_relay(packet):
         print(" Relay engine not initialized with ESPNow")
         return False
         
-    msg_type = packet.get("msg_type") or packet.get("t")
-    target_mac = packet.get("target_mac") or packet.get("dst")
-    routing_path = packet.get("routing_path") or packet.get("path", [])
-    current_hop_index = packet.get("current_hop_index") if "current_hop_index" in packet else packet.get("hop", 0)
-    payload = packet.get("payload", {})
+    msg_type = packet.get("msg_type")
+    target = packet.get("target")
+    hops = packet.get("hops", [])
+    current_hop_index = packet.get("current_hop_index", 0)
     
     sta = network.WLAN(network.STA_IF)
     local_mac = bytes_to_mac(sta.config('mac'))
     
-    # If the packet is targeted at us, return True immediately
-    if target_mac and target_mac.upper() == local_mac.upper():
-        print(" Packet reached final target destination.")
-        return True
-        
-    if not routing_path:
-        return False
-        
-    if current_hop_index >= len(routing_path):
-        print(" current_hop_index out of routing path bounds")
-        return False
-        
-    current_hop_mac = routing_path[current_hop_index]
+    cfg = config.load_config()
+    client_cfg = cfg.get("client", {})
+    local_id = client_cfg.get("id", "").lower()
     
-    if current_hop_mac.upper() != local_mac.upper():
+    # 1. Check if packet target is us (case-insensitive) or broadcast
+    if target:
+        t_lower = target.lower()
+        if t_lower == local_id:
+            print(" Packet reached final target destination.")
+            return True
+        if t_lower in ("broadcast", "ff:ff:ff:ff:ff:ff"):
+            return True
+
+    # 2. Check if we should relay it based on current_hop_index and hops
+    if not hops:
         return False
         
-    if target_mac.upper() == local_mac.upper():
-        print(" Packet reached final target destination.")
-        return True
-        
-    next_hop_index = current_hop_index + 1
-    if next_hop_index >= len(routing_path):
-        print(" Cannot relay: current hop matches us, but no next hop in path and we are not the target")
+    if current_hop_index >= len(hops):
+        print(" current_hop_index out of hops bounds")
         return False
         
-    next_hop_mac = routing_path[next_hop_index]
-    next_hop_bytes = mac_to_bytes(next_hop_mac)
+    current_hop_mac = hops[current_hop_index]
     
-    packet["current_hop_index"] = next_hop_index
-    
-    print(f" Relaying packet to next hop: {next_hop_mac}")
-    try:
-        add_peer_safe(_e, next_hop_bytes)
-        payload_str = ujson.dumps(packet)
-        _e.send(next_hop_bytes, payload_str.encode('utf-8'))
-        print(" Packet relayed successfully.")
-    except Exception as e:
-        print(f" Failed to relay packet to next hop: {e}")
+    # If the current hop MAC matches us, we need to relay to next hop
+    if current_hop_mac.upper() == local_mac.upper():
+        next_hop_index = current_hop_index + 1
+        if next_hop_index >= len(hops):
+            # No next hop, but target is not us!
+            print(" Routing error: no next hop and we are not the target.")
+            return False
+            
+        next_hop_mac = hops[next_hop_index]
+        next_hop_bytes = mac_to_bytes(next_hop_mac)
+        
+        # Update the packet in-place with new current_hop_index in raw dict
+        if "raw" in packet and isinstance(packet["raw"], dict):
+            raw_packet = packet["raw"]
+            if "route" in raw_packet and isinstance(raw_packet["route"], dict):
+                raw_packet["route"]["current_hop_index"] = next_hop_index
+            else:
+                raw_packet["current_hop_index"] = next_hop_index
+                if "hop" in raw_packet:
+                    raw_packet["hop"] = next_hop_index
+        
+        print(f" Relaying packet to next hop: {next_hop_mac}")
+        try:
+            add_peer_safe(_e, next_hop_bytes)
+            payload_str = ujson.dumps(packet["raw"])
+            _e.send(next_hop_bytes, payload_str.encode('utf-8'))
+            print(" Packet relayed successfully.")
+        except Exception as e:
+            print(f" Failed to relay packet to next hop: {e}")
+            
+        return False
         
     return False

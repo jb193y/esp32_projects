@@ -56,41 +56,67 @@ def on_message(topic, msg):
         
         payload = ujson.loads(payload_str)
         
-        # Check if it matches mobile app format: {"device_id": "...", "state": {"pump": "ON"}}
-        target_device = payload.get("device_id")
-        command = None
-        args = {}
-        routing_path = []
-        
-        if "state" in payload:
-            state_data = payload.get("state", {})
-            if "pump" in state_data:
-                if topic_str.startswith("valve/"):
-                    command = "VALVE_OPEN" if state_data["pump"] == "ON" else "VALVE_CLOSE"
-                else:
-                    command = "PUMP_ON" if state_data["pump"] == "ON" else "PUMP_OFF"
-            elif "valve" in state_data:
-                command = "VALVE_OPEN" if state_data["valve"] in ("OPEN", "ON") else "VALVE_CLOSE"
-            elif "hub_status" in state_data:
-                command = "HUB_ENABLE" if state_data["hub_status"] == "Enabled" else "HUB_DISABLE"
-            elif "command" in state_data:
-                command = state_data["command"]
-                # Extract target_node and all extra fields (valve_id, etc.) from state_data
-                target_device = state_data.get("target_device_id") or state_data.get("target_node") or target_device
-                args = {k: v for k, v in state_data.items() if k not in ("command", "target_node", "target_device_id")}
-        elif "command" in payload:
-            command = payload.get("command")
-            target_device = payload.get("target_device_id") or payload.get("target_node") or target_device
-            routing_path = payload.get("routing_path", [])
-            args = {k: v for k, v in payload.items() if k not in ("command", "target_node", "target_device_id", "routing_path")}
-            if "payload" in payload and isinstance(payload["payload"], dict):
-                args.update(payload["payload"])
+        # Check if it is the standardized JSON envelope
+        if "source" in payload and "target" in payload and "msg_type" in payload and "data" in payload:
+            target_device = payload.get("target")
+            msg_type = payload.get("msg_type")
+            data = payload.get("data", {})
+            
+            command = data.get("cmd") or data.get("command") or data.get("state")
+            routing_path = payload.get("route", {}).get("hops", [])
+            args = data
+            
+            # If data is a string (legacy command representation), unpack it
+            if isinstance(data, str):
+                command = data
+                args = {}
+            elif isinstance(data, dict):
+                # Ensure we get the command if nested under "state"
+                if "state" in data:
+                    state_data = data["state"]
+                    if isinstance(state_data, dict):
+                        if "pump" in state_data:
+                            command = "PUMP_ON" if state_data["pump"] == "ON" else "PUMP_OFF"
+                        elif "valve" in state_data:
+                            command = "VALVE_OPEN" if state_data["valve"] in ("OPEN", "ON") else "VALVE_CLOSE"
+                        elif "hub_status" in state_data:
+                            command = "HUB_ENABLE" if state_data["hub_status"] == "Enabled" else "HUB_DISABLE"
+                        elif "command" in state_data:
+                            command = state_data["command"]
         else:
-            # Fallback for old/direct testing format
-            target_device = payload.get("target_node", target_device) # Keep 'target_node' for backward compatibility
-            command = payload.get("command")
-            routing_path = payload.get("routing_path", [])
-            args = payload.get("payload", {})
+            # Fallback legacy parsing
+            target_device = payload.get("device_id")
+            command = None
+            args = {}
+            routing_path = []
+            
+            if "state" in payload:
+                state_data = payload.get("state", {})
+                if "pump" in state_data:
+                    if topic_str.startswith("valve/"):
+                        command = "VALVE_OPEN" if state_data["pump"] == "ON" else "VALVE_CLOSE"
+                    else:
+                        command = "PUMP_ON" if state_data["pump"] == "ON" else "PUMP_OFF"
+                elif "valve" in state_data:
+                    command = "VALVE_OPEN" if state_data["valve"] in ("OPEN", "ON") else "VALVE_CLOSE"
+                elif "hub_status" in state_data:
+                    command = "HUB_ENABLE" if state_data["hub_status"] == "Enabled" else "HUB_DISABLE"
+                elif "command" in state_data:
+                    command = state_data["command"]
+                    target_device = state_data.get("target_device_id") or state_data.get("target_node") or target_device
+                    args = {k: v for k, v in state_data.items() if k not in ("command", "target_node", "target_device_id")}
+            elif "command" in payload:
+                command = payload.get("command")
+                target_device = payload.get("target_device_id") or payload.get("target_node") or target_device
+                routing_path = payload.get("routing_path", [])
+                args = {k: v for k, v in payload.items() if k not in ("command", "target_node", "target_device_id", "routing_path")}
+                if "payload" in payload and isinstance(payload["payload"], dict):
+                    args.update(payload["payload"])
+            else:
+                target_device = payload.get("target_node", target_device)
+                command = payload.get("command")
+                routing_path = payload.get("routing_path", [])
+                args = payload.get("payload", {})
             
         # Fallback to extract target from topic if still missing
         if not target_device and "/" in topic_str:
@@ -105,13 +131,24 @@ def on_message(topic, msg):
         cfg = config.load_config()
         client_id = cfg.get("client", {}).get("id", "hub_master_01")
 
-        # Instant MQTT Acknowledgment back to sender
+        # Instant MQTT Acknowledgment back to sender inside standard envelope
         resp_payload = {
-            "status": "RECEIVED_BY_HUB",
-            "target_device_id": target_device,
-            "command": command,
+            "source": client_id,
+            "target": payload.get("source", "backend_api"),
+            "msg_type": "ACK",
             "timestamp": time.time(),
-            "hub_id": client_id
+            "route": {
+                "transport": "MQTT",
+                "route_id": "hub_ack",
+                "current_hop_index": 0,
+                "hops": [payload.get("source", "backend_api")],
+                "link_diagnostics": []
+            },
+            "data": {
+                "status": "RECEIVED_BY_HUB",
+                "target_device_id": target_device,
+                "command": command
+            }
         }
         publish_msg(f"{topic_str}/response", resp_payload)
         publish_msg(f"farm/{client_id}/command_response", resp_payload)

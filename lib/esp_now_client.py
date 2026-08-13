@@ -59,17 +59,51 @@ def add_peer_safe(e, peer_bytes):
 def parse_packet(payload_str):
     p = ujson.loads(payload_str)
     msg_type = p.get("msg_type") or p.get("t")
-    target_mac = p.get("target_mac") or p.get("dst", "")
-    routing_path = p.get("routing_path") or p.get("path", [])
-    current_hop_index = p.get("current_hop_index") if "current_hop_index" in p else p.get("hop", 0)
-    payload = p.get("payload") if "payload" in p else p.get("pld", {})
+    target = p.get("target") or p.get("dst", "")
+    source = p.get("source")
+    route = p.get("route", {})
+    hops = route.get("hops", p.get("routing_path", p.get("path", [])))
+    current_hop_index = route.get("current_hop_index", p.get("current_hop_index", p.get("hop", 0)))
+    data = p.get("data", p.get("payload", p.get("pld", {})))
     return {
         "msg_type": msg_type,
-        "target_mac": target_mac,
-        "routing_path": routing_path,
+        "target": target,
+        "source": source,
+        "route": route,
+        "hops": hops,
         "current_hop_index": current_hop_index,
-        "payload": payload
+        "data": data,
+        "raw": p
     }
+
+def get_route_for_target(target_id, target_mac=None):
+    cfg = config.load_config()
+    
+    # Check if there is a pre-provisioned route in config for this target
+    routes = cfg.get("routes", {})
+    if target_id in routes:
+        route_info = routes[target_id]
+        return route_info.get("route_id", "pre_provisioned"), route_info.get("hops", [])
+        
+    # Dynamic fallback to parent/hub configuration
+    hub_cfg = cfg.get("hub", {})
+    hub_mac = hub_cfg.get("mac", "ff:ff:ff:ff:ff:ff")
+    
+    parent_cfg = cfg.get("parent", {})
+    parent_mac = parent_cfg.get("mac", "00:00:00:00:00:00")
+    
+    dest_mac = target_mac or hub_mac
+    
+    hops = []
+    if parent_mac != "00:00:00:00:00:00" and parent_mac != "ff:ff:ff:ff:ff:ff":
+        hops.append(parent_mac)
+    if dest_mac != "00:00:00:00:00:00" and dest_mac not in hops:
+        hops.append(dest_mac)
+        
+    if not hops:
+        hops = [dest_mac]
+        
+    return "dynamic_fallback", hops
 
 def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
     global _e
@@ -77,49 +111,46 @@ def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
         return False
 
     cfg = config.load_config()
-    hub_cfg = cfg.get("hub", {})
-    dest_mac = target_mac or hub_cfg.get("mac", "ff:ff:ff:ff:ff:ff")
-    
-    if not dest_mac or dest_mac == "00:00:00:00:00:00":
-        parent_cfg = cfg.get("parent", {})
-        dest_mac = parent_cfg.get("mac", "ff:ff:ff:ff:ff:ff")
-        
-    if not dest_mac or dest_mac == "00:00:00:00:00:00":
-        dest_mac = "ff:ff:ff:ff:ff:ff"
+    client_cfg = cfg.get("client", {})
+    source_id = client_cfg.get("id", "unknown_node")
 
-    parent_cfg = cfg.get("parent", {})
-    parent_mac_str = parent_cfg.get("mac", "00:00:00:00:00:00")
-    
-    routing_path = []
-    if parent_mac_str != "00:00:00:00:00:00" and parent_mac_str != dest_mac:
-        routing_path = [parent_mac_str, dest_mac]
-    else:
-        routing_path = [dest_mac]
-        
-    packet = {
-        "t": msg_type,
-        "dst": dest_mac,
-        "pld": payload
+    # If it is status pairing request or target_mac is broadcast, target is broadcast
+    is_broadcast = (target_mac == "ff:ff:ff:ff:ff:ff" or msg_type == "PAIR_REQ" or (msg_type == "STATUS" and payload.get("status") == "pairing_request"))
+    target_id = "broadcast" if is_broadcast else "hub_master_01"
+
+    # Get pre-provisioned route or dynamic fallback
+    route_id, hops = get_route_for_target(target_id, target_mac)
+
+    envelope = {
+        "source": source_id,
+        "target": target_id,
+        "msg_type": "STATUS" if msg_type == "PAIR_REQ" else msg_type,
+        "timestamp": int(time.time()),
+        "route": {
+            "transport": "ESPNOW",
+            "route_id": route_id,
+            "current_hop_index": 0,
+            "hops": hops,
+            "link_diagnostics": []
+        },
+        "data": payload
     }
-    if len(routing_path) > 1:
-        packet["path"] = routing_path
-        packet["hop"] = 0
-    
-    next_hop = routing_path[0]
+
+    next_hop = hops[0]
     next_hop_bytes = mac_to_bytes(next_hop)
-    
+
     try:
         add_peer_safe(_e, next_hop_bytes)
-        payload_str = ujson.dumps(packet)
+        payload_str = ujson.dumps(envelope)
         try:
             _e.send(next_hop_bytes, payload_str.encode('utf-8'))
-            print(f" Packet sent to next hop {next_hop} for destination {dest_mac}")
+            print(f" Envelope sent to next hop {next_hop} for destination {target_id}")
             return True
         except Exception as send_err:
             print(f" ESP-NOW send notice to {next_hop}: {send_err}")
             return False
     except Exception as err:
-        print(f" Failed to transmit packet to destination {dest_mac}:", err)
+        print(f" Failed to transmit packet to destination {target_id}:", err)
         return False
 
 # Backward compatibility alias for pump controller
@@ -147,12 +178,13 @@ def send_pairing_request():
     client_cfg = cfg.get("client", {})
     node_type = client_cfg.get("type", "client").upper()
     payload = {
+        "status": "pairing_request",
         "node_type": node_type,
         "node_id": client_cfg.get("id", ""),
         "custom_name": client_cfg.get("custom_name", "Client Node")
     }
     print(f"Sending PAIR_REQ from {node_type} to broadcast on Channel {ch}...")
-    send_ack_or_tele_to_hub("PAIR_REQ", payload, target_mac="ff:ff:ff:ff:ff:ff")
+    send_ack_or_tele_to_hub("STATUS", payload, target_mac="ff:ff:ff:ff:ff:ff")
 
 
 def init_espnow_client(on_cmd_received_fn=None):
@@ -189,6 +221,10 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
     sta = network.WLAN(network.STA_IF)
     local_mac = bytes_to_mac(sta.config('mac'))
     
+    cfg = config.load_config()
+    client_cfg = cfg.get("client", {})
+    local_id = client_cfg.get("id", "").lower()
+    
     while True:
         if heartbeats is not None:
             heartbeats["esp_now"] = time.time()
@@ -202,13 +238,17 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                 
                 packet = parse_packet(payload_str)
                 msg_type = packet.get("msg_type")
-                target_mac = packet.get("target_mac")
+                target = packet.get("target")
                 
-                t_mac_lower = (target_mac or "").lower()
-                l_mac_lower = (local_mac or "").lower()
+                is_for_us = False
+                if target:
+                    t_lower = target.lower()
+                    is_for_us = (t_lower == local_id or t_lower in ("broadcast", "ff:ff:ff:ff:ff:ff"))
+                else:
+                    is_for_us = (msg_type == "CMD" or msg_type == "ACK" or msg_type == "COMMAND")
 
                 if msg_type == "BEACON" and not _paired:
-                    b_pld = packet.get("payload", {})
+                    b_pld = packet.get("data", {})
                     hub_mac = b_pld.get("hub_mac", sender_mac)
                     parent_mac = b_pld.get("sender_mac", sender_mac)
                     b_ch = b_pld.get("channel")
@@ -219,19 +259,20 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                             upd["wifi"] = {"channel": b_ch}
                             sta.config(channel=b_ch)
                         config.update_config(upd)
-                        # Immediately send PAIR_REQ to chosen parent
+                        # Immediately send pairing STATUS to chosen parent
                         client_cfg = config.load_config().get("client", {})
                         pld = {
+                            "status": "pairing_request",
                             "node_type": client_cfg.get("type", "VALVE").upper(),
                             "node_id": client_cfg.get("id", ""),
                             "custom_name": client_cfg.get("custom_name", "Client Node")
                         }
-                        send_ack_or_tele_to_hub("PAIR_REQ", pld, target_mac=parent_mac)
+                        send_ack_or_tele_to_hub("STATUS", pld, target_mac=parent_mac)
                     except Exception as b_ex:
                         print("Error handling discovery BEACON:", b_ex)
 
-                if msg_type == "ACK" and (t_mac_lower == l_mac_lower or not target_mac or t_mac_lower == "ff:ff:ff:ff:ff:ff"):
-                    ack_pld = packet.get("payload", {})
+                if msg_type == "ACK" and is_for_us:
+                    ack_pld = packet.get("data", {})
                     if ack_pld.get("status") == "paired":
                         _paired = True
                         hub_mac = ack_pld.get("hub_mac", sender_mac)
@@ -248,20 +289,14 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                             print("Error updating config on pairing:", ex)
                 
                 # Relaying and target validation
-                is_for_us = False
-                if target_mac is None:
-                    # Legacy fallback
-                    is_for_us = (msg_type == "CMD" or msg_type == "ACK")
-                else:
-                    is_for_us = relay_engine.process_and_relay(packet)
+                is_actually_for_us = relay_engine.process_and_relay(packet)
                     
-                if is_for_us and msg_type == "CMD" and on_cmd_received_fn is not None:
-                    payload = packet.get("payload", {})
-                    cmd = payload.get("cmd")
+                if is_actually_for_us and (msg_type == "COMMAND" or msg_type == "CMD") and on_cmd_received_fn is not None:
+                    payload = packet.get("data", {})
+                    cmd = payload.get("cmd") or payload.get("command")
                     
-                    # Inject sender_mac (original sender or immediate hop) to allow communicating back
-                    payload["sender_mac"] = packet.get("sender_mac", sender_mac)
-                    payload["routing_path"] = packet.get("routing_path", [])
+                    payload["sender_mac"] = sender_mac
+                    payload["routing_path"] = packet.get("hops", [])
                     
                     on_cmd_received_fn(cmd, payload)
             else:
