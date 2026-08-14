@@ -12,6 +12,20 @@ import time
 import config
 import relay_engine
 
+def set_wifi_channel(ch):
+    ap = network.WLAN(network.AP_IF)
+    ap.active(True)
+    try:
+        ap.config(channel=ch)
+    except Exception:
+        pass
+    sta = network.WLAN(network.STA_IF)
+    sta.active(True)
+    try:
+        sta.config(channel=ch)
+    except Exception:
+        pass
+
 _e = None
 _paired = False
 
@@ -166,11 +180,7 @@ def send_pairing_request():
     ch = channels[_pair_channel_idx % len(channels)]
     _pair_channel_idx += 1
     
-    sta = network.WLAN(network.STA_IF)
-    try:
-        sta.config(channel=ch)
-    except Exception:
-        pass
+    set_wifi_channel(ch)
 
     cfg = config.load_config()
     client_cfg = cfg.get("client", {})
@@ -195,13 +205,8 @@ def init_espnow_client(on_cmd_received_fn=None):
     client_name = cfg.get("client", {}).get("custom_name", "Client Node")
     print(f" Initializing {client_name} ESP-NOW Client...")
     
-    sta = network.WLAN(network.STA_IF)
-    sta.active(True)
     ch = cfg.get("wifi", {}).get("channel", 4)
-    try:
-        sta.config(channel=ch)
-    except Exception:
-        pass
+    set_wifi_channel(ch)
     
     _e = espnow.ESPNow()
     _e.active(True)
@@ -255,7 +260,7 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                         upd = {"hub": {"mac": hub_mac}, "parent": {"mac": parent_mac}}
                         if b_ch:
                             upd["wifi"] = {"channel": b_ch}
-                            sta.config(channel=b_ch)
+                            set_wifi_channel(b_ch)
                         config.update_config(upd)
                         # Immediately send pairing STATUS to chosen parent
                         client_cfg = config.load_config().get("client", {})
@@ -280,8 +285,7 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                             upd = {"hub": {"mac": hub_mac}, "parent": {"mac": hub_mac}}
                             if hub_ch:
                                 upd["wifi"] = {"channel": hub_ch}
-                                sta = network.WLAN(network.STA_IF)
-                                sta.config(channel=hub_ch)
+                                set_wifi_channel(hub_ch)
                             config.update_config(upd)
                         except Exception as ex:
                             print("Error updating config on pairing:", ex)
