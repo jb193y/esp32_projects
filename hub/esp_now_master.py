@@ -37,7 +37,7 @@ def save_node(mac_str, node_type, node_id=None, name=None):
         "node_type": node_type,
         "node_id": node_id or mac_str.replace(':', '')[-8:],
         "custom_name": name or "{}_{}".format(node_type, mac_str[-5:].replace(':', '')),
-        "paired_at": time.time()
+        "paired_at": config.get_unix_time()
     }
     with open(NODES_FILE, 'w') as f:
         ujson.dump(nodes, f)
@@ -112,7 +112,7 @@ def send_espnow_msg(target_mac_str, msg_dict, routing_path=None, target_id=None)
         "source": hub_id,
         "target": target_id or target_mac_str,
         "msg_type": msg_type,
-        "timestamp": int(time.time()),
+        "timestamp": int(config.get_unix_time()),
         "route": {
             "transport": "ESPNOW",
             "route_id": f"route_to_{target_id or target_mac_str}",
@@ -144,7 +144,7 @@ _discovery_active_until = 0
 
 def start_mesh_discovery(duration_sec=60):
     global _discovery_active_until
-    _discovery_active_until = time.time() + duration_sec
+    _discovery_active_until = config.get_unix_time() + duration_sec
     print(f" Mesh Discovery Mode STARTED for {duration_sec} seconds!")
 
 def dispatch_command_from_mqtt(target_node, command, routing_path, args):
@@ -162,7 +162,7 @@ def dispatch_command_from_mqtt(target_node, command, routing_path, args):
             "source": client_id,
             "target": "backend_api",
             "msg_type": "ACK",
-            "timestamp": time.time(),
+            "timestamp": config.get_unix_time(),
             "route": {
                 "transport": "MQTT",
                 "route_id": "discovery_ack",
@@ -189,7 +189,7 @@ def dispatch_command_from_mqtt(target_node, command, routing_path, args):
             "source": client_id,
             "target": "backend_api",
             "msg_type": "ACK",
-            "timestamp": time.time(),
+            "timestamp": config.get_unix_time(),
             "route": {
                 "transport": "MQTT",
                 "route_id": "broadcast_fwd_ack",
@@ -241,7 +241,7 @@ def dispatch_command_from_mqtt(target_node, command, routing_path, args):
         "source": client_id,
         "target": "backend_api",
         "msg_type": "ACK",
-        "timestamp": time.time(),
+        "timestamp": config.get_unix_time(),
         "route": {
             "transport": "MQTT",
             "route_id": "fwd_cmd_ack",
@@ -303,9 +303,9 @@ def espnow_receiver_thread(heartbeats=None):
 
     while True:
         if heartbeats is not None:
-            heartbeats["esp_now"] = time.time()
+            heartbeats["esp_now"] = config.get_unix_time()
 
-        now = time.time()
+        now = config.get_unix_time()
         if now < _discovery_active_until:
             if now - _last_beacon_time >= 1.5:
                 _last_beacon_time = now
@@ -318,7 +318,7 @@ def espnow_receiver_thread(heartbeats=None):
                     "source": "hub_master_01",
                     "target": "broadcast",
                     "msg_type": "BEACON",
-                    "timestamp": int(time.time()),
+                    "timestamp": int(config.get_unix_time()),
                     "route": {
                         "transport": "ESPNOW",
                         "route_id": "beacon",
@@ -392,18 +392,18 @@ def espnow_receiver_thread(heartbeats=None):
                 type_slug = node_type.lower()
                 device_id = node_info.get("node_id", "").lower() or sender_mac_str.replace(':', '')
 
-                location = cfg.get("client", {}).get("location", "default_location")
+                site = cfg.get("client", {}).get("site", "default_site")
                 group = cfg.get("client", {}).get("group", "all")
 
-                if location == "default_location":
-                    print("ERROR: 'location' not set in hub config. Cannot publish node status to MQTT.")
+                if site == "default_site":
+                    print("ERROR: 'site' not set in hub config. Cannot publish node status to MQTT.")
                     continue
 
                 status_payload = {
                     "source": device_id,
                     "target": "backend_api",
                     "msg_type": "STATUS",
-                    "timestamp": time.time(),
+                    "timestamp": config.get_unix_time(),
                     "route": {
                         "transport": "ESPNOW",
                         "route_id": packet.get("route", {}).get("route_id", "direct"),
@@ -420,7 +420,7 @@ def espnow_receiver_thread(heartbeats=None):
                 }
                 
                 # Publish to new namespaced topic only
-                status_topic = f"{location}/{group}/{type_slug}/{device_id}/status"
+                status_topic = f"{site}/{group}/{type_slug}/{device_id}/status"
                 mqtt_client.publish_msg(status_topic, status_payload, retain=True)
                 print(f"Published device online status for {device_id}")
 
@@ -429,7 +429,7 @@ def espnow_receiver_thread(heartbeats=None):
                     "source": "hub_master_01",
                     "target": "backend_api",
                     "msg_type": "STATUS",
-                    "timestamp": time.time(),
+                    "timestamp": config.get_unix_time(),
                     "route": {
                         "transport": "MQTT",
                         "route_id": "hub_discovery_notice",
@@ -448,11 +448,11 @@ def espnow_receiver_thread(heartbeats=None):
 
             elif msg_type in ("TELE", "TELEMETRY"):
                 print(f"Telemetry received from node {sender_mac_str}")
-                location = cfg.get("client", {}).get("location", "default_location")
+                site = cfg.get("client", {}).get("site", "default_site")
                 group = cfg.get("client", {}).get("group", "all")
 
-                if location == "default_location":
-                    print("ERROR: 'location' not set in hub config. Cannot publish node telemetry.")
+                if site == "default_site":
+                    print("ERROR: 'site' not set in hub config. Cannot publish node telemetry.")
                     continue
 
                 nodes = load_nodes()
@@ -460,7 +460,7 @@ def espnow_receiver_thread(heartbeats=None):
                 node_type = node_info.get("node_type", "node").lower()
                 device_id = node_info.get("node_id", sender_mac_str.replace(':', '')).lower()
                 
-                tele_topic = f"{location}/{group}/{node_type}/{device_id}/telemetry"
+                tele_topic = f"{site}/{group}/{node_type}/{device_id}/telemetry"
                 tele_payload = data.copy() if isinstance(data, dict) else {"data": data}
                 tele_payload["device_id"] = device_id
                 tele_payload["node_mac"] = sender_mac_str
@@ -470,7 +470,7 @@ def espnow_receiver_thread(heartbeats=None):
                     "source": source or device_id,
                     "target": "hub_master_01",
                     "msg_type": "TELEMETRY",
-                    "timestamp": packet.get("raw", {}).get("timestamp", int(time.time())),
+                    "timestamp": packet.get("raw", {}).get("timestamp", int(config.get_unix_time())),
                     "route": {
                         "transport": "ESPNOW",
                         "route_id": packet.get("route", {}).get("route_id", "direct"),
@@ -485,11 +485,11 @@ def espnow_receiver_thread(heartbeats=None):
             elif msg_type == "ACK":
                 print(f"ACK received from {sender_mac_str}")
                 nodes = load_nodes()
-                location = cfg.get("client", {}).get("location", "default_location")
+                site = cfg.get("client", {}).get("site", "default_site")
                 group = cfg.get("client", {}).get("group", "all")
 
-                if location == "default_location":
-                    print("ERROR: 'location' not set in hub config. Cannot publish node ACK.")
+                if site == "default_site":
+                    print("ERROR: 'site' not set in hub config. Cannot publish node ACK.")
                     continue
 
                 node_info = nodes.get(sender_mac_str, {})
@@ -501,7 +501,7 @@ def espnow_receiver_thread(heartbeats=None):
                     "device_id": device_id,
                     "node_mac": sender_mac_str,
                     "ack_data": data,
-                    "timestamp": time.time()
+                    "timestamp": config.get_unix_time()
                 }
 
                 # Wrap in standard JSON envelope before publishing to MQTT
@@ -509,7 +509,7 @@ def espnow_receiver_thread(heartbeats=None):
                     "source": source or device_id,
                     "target": "hub_master_01",
                     "msg_type": "ACK",
-                    "timestamp": packet.get("raw", {}).get("timestamp", int(time.time())),
+                    "timestamp": packet.get("raw", {}).get("timestamp", int(config.get_unix_time())),
                     "route": {
                         "transport": "ESPNOW",
                         "route_id": packet.get("route", {}).get("route_id", "direct"),
@@ -521,26 +521,26 @@ def espnow_receiver_thread(heartbeats=None):
                 }
                 
                 # Publish to new namespaced topics
-                mqtt_client.publish_msg(f"{location}/{group}/{node_type}/{device_id}/command/response", mqtt_payload)
-                mqtt_client.publish_msg(f"{location}/{group}/{node_type}/{device_id}/acks", mqtt_payload)
+                mqtt_client.publish_msg(f"{site}/{group}/{node_type}/{device_id}/command/response", mqtt_payload)
+                mqtt_client.publish_msg(f"{site}/{group}/{node_type}/{device_id}/acks", mqtt_payload)
                 mqtt_client.publish_msg(f"farm/{client_id}/command_response", mqtt_payload)
                 print(f"Published EXECUTED_BY_NODE ACK for {device_id}")
 
             elif msg_type in ("ALERT", "ALERTS"):
                 print(f"ALERT received from {sender_mac_str}!")
                 nodes = load_nodes()
-                location = cfg.get("client", {}).get("location", "default_location")
+                site = cfg.get("client", {}).get("site", "default_site")
                 group = cfg.get("client", {}).get("group", "all")
 
-                if location == "default_location":
-                    print("ERROR: 'location' not set in hub config. Cannot publish node alert.")
+                if site == "default_site":
+                    print("ERROR: 'site' not set in hub config. Cannot publish node alert.")
                     continue
 
                 node_info = nodes.get(sender_mac_str, {})
                 node_type = node_info.get("node_type", "node").lower()
                 device_id = node_info.get("node_id", sender_mac_str.replace(':', '')).lower()
                 
-                alert_topic = f"{location}/{group}/{node_type}/{device_id}/alerts"
+                alert_topic = f"{site}/{group}/{node_type}/{device_id}/alerts"
                 alert_payload = data.copy() if isinstance(data, dict) else {"data": data}
                 alert_payload["device_id"] = device_id
                 alert_payload["device_type"] = node_type.upper()
@@ -551,7 +551,7 @@ def espnow_receiver_thread(heartbeats=None):
                     "source": source or device_id,
                     "target": "hub_master_01",
                     "msg_type": "ALERT",
-                    "timestamp": packet.get("raw", {}).get("timestamp", int(time.time())),
+                    "timestamp": packet.get("raw", {}).get("timestamp", int(config.get_unix_time())),
                     "route": {
                         "transport": "ESPNOW",
                         "route_id": packet.get("route", {}).get("route_id", "direct"),

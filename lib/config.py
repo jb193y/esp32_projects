@@ -66,3 +66,11 @@ def update_config(data):
 
     save_config(cfg)
     return cfg
+
+def get_unix_time():
+    import time
+    t = time.time()
+    # MicroPython epoch (2000-01-01) to Unix epoch (1970-01-01) offset
+    if t > 1000000:
+        return t + 946684800
+    return t

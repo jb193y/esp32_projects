@@ -69,6 +69,13 @@ def wan_thread(heartbeats=None):
             if connected:
                 _is_wan_connected = True
                 led_status.set_status("WIFI_CONNECTED")
+                try:
+                    import ntptime
+                    ntptime.host = "pool.ntp.org"
+                    ntptime.settime()
+                    print(" NTP synchronization successful. Local time:", time.localtime())
+                except Exception as ntp_err:
+                    print(" NTP sync failed:", ntp_err)
             else:
                 print("WiFi Reconnection failed. Retrying in 10s...")
                 time.sleep(10)

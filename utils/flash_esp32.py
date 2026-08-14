@@ -125,7 +125,8 @@ def main():
     # --- 2. Delete Unwanted Files (Cleanup) ---
     preserve_list = {
         'events.jsonl',
-        'faults.jsonl'
+        'faults.jsonl',
+        'config.json'
     }
     
     unwanted_files = []

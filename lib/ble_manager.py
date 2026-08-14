@@ -108,6 +108,12 @@ def update_device_config(data):
         cfg.setdefault("client", {})["custom_name"] = data["custom_name"]
         print(f" Custom Name updated: {data['custom_name']}")
 
+    # 4.5 Site / Location
+    site = data.get("site") or data.get("location")
+    if site:
+        cfg.setdefault("client", {})["site"] = site
+        print(f" Site updated: {site}")
+
     # 5. Controller/Board Type
     if "controller_type" in data or "board_type" in data:
         board_type = data.get("controller_type") or data.get("board_type")
@@ -121,6 +127,17 @@ def update_device_config(data):
         cfg.setdefault("client", {})["id"] = node_id
         cfg.setdefault("mqtt", {})["topic_prefix"] = f"farm/{node_id}"
         print(f" Node ID updated: {node_id}")
+
+    # 7. Time initialization
+    if "timestamp" in data:
+        try:
+            ts = data["timestamp"]
+            tm = time.gmtime(ts)
+            rtc = machine.RTC()
+            rtc.datetime((tm[0], tm[1], tm[2], tm[6], tm[3], tm[4], tm[5], 0))
+            print(f" RTC time initialized via BLE to: {time.localtime()}")
+        except Exception as e:
+            print(" Failed to initialize RTC time from BLE:", e)
         
     cfg.setdefault("client", {})["mode"] = "sta"
     

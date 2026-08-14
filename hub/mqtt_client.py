@@ -27,17 +27,17 @@ def publish_hub_telemetry(status_val):
         client = cfg.get("client", {})
         client_id = client.get("id", "hub_master_01")
         client_type = client.get("type", "hub").lower()
-        location = client.get("location", "default_location")
+        site = client.get("site", "default_site")
         group = client.get("group", "all")
         
-        if location == "default_location":
-            print("ERROR: 'location' not set in config. Cannot publish hub telemetry.")
+        if site == "default_site":
+            print("ERROR: 'site' not set in config. Cannot publish hub telemetry.")
             return
         
-        tele_topic = f"{location}/{group}/{client_type}/{client_id}/telemetry"
+        tele_topic = f"{site}/{group}/{client_type}/{client_id}/telemetry"
 
         payload = {
-            "timestamp": time.time(),
+            "timestamp": config.get_unix_time(),
             "hub_status": status_val,
             "device_status": status_val,
             "mode": "AUTO"
@@ -136,7 +136,7 @@ def on_message(topic, msg):
             "source": client_id,
             "target": payload.get("source", "backend_api"),
             "msg_type": "ACK",
-            "timestamp": time.time(),
+            "timestamp": config.get_unix_time(),
             "route": {
                 "transport": "MQTT",
                 "route_id": "hub_ack",
@@ -206,12 +206,12 @@ def mqtt_thread(heartbeats=None):
     client_info = cfg.get("client", {})
     client_id = client_info.get("id", "hub_master_01")
     client_type = client_info.get("type", "hub").lower()
-    location = client_info.get("location", "default_location")
+    site = client_info.get("site", "default_site")
     group = client_info.get("group", "all")
     
     # The hub's own command topic, using the new namespaced format
-    cmd_topic = f"{location}/{group}/{client_type}/{client_id}/command"
-    status_topic = f"{location}/{group}/{client_type}/{client_id}/status"
+    cmd_topic = f"{site}/{group}/{client_type}/{client_id}/command"
+    status_topic = f"{site}/{group}/{client_type}/{client_id}/status"
     
     while True:
         if heartbeats is not None:
@@ -234,6 +234,19 @@ def mqtt_thread(heartbeats=None):
                     password=mqtt_cfg.get("password", ""),
                     keepalive=mqtt_cfg.get("keepalive", 60)
                 )
+                
+                # Configure Last Will and Testament (LWT) for abrupt disconnects
+                lwt_payload = ujson.dumps({
+                    "client_id": client_id,
+                    "status": "offline",
+                    "timestamp": config.get_unix_time(),
+                    "reason": "keepalive_timeout"
+                })
+                try:
+                    _client.set_last_will(status_topic.encode('utf-8'), lwt_payload.encode('utf-8'), retain=True)
+                except Exception as lwt_err:
+                    print("Failed to set Last Will:", lwt_err)
+
                 _client.set_callback(on_message)
                 _client.connect()
                 _is_connected = True
@@ -254,15 +267,15 @@ def mqtt_thread(heartbeats=None):
                         pass
                 
                 # Publish startup status
-                if location != "default_location":
+                if site != "default_site":
                     publish_msg(status_topic, {
                         "client_id": client_id,
                         "status": "online",
-                        "timestamp": time.time(),
+                        "timestamp": config.get_unix_time(),
                         "fw_ver": cfg.get("client", {}).get("firmware_version", "hub_v1.0.0")
                     }, retain=True)
                 else:
-                    print("ERROR: 'location' not set in config. Cannot publish hub status.")
+                    print("ERROR: 'site' not set in config. Cannot publish hub status.")
                 
                 # Publish initial Hub status telemetry
                 hub_status = cfg.get("client", {}).get("status", "Enabled")
