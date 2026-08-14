@@ -296,6 +296,9 @@ def espnow_receiver_thread(heartbeats=None):
     _e = espnow.ESPNow()
     _e.active(True)
 
+    # Explicitly register broadcast peer so MicroPython delivers full broadcast packets
+    add_peer_safe(_e, b'\xff\xff\xff\xff\xff\xff')
+
     _last_beacon_time = 0
 
     while True:

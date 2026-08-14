@@ -271,11 +271,17 @@ def mqtt_thread(heartbeats=None):
                 
                 # Publish startup status
                 if site != "default_site":
+                    import network as _net
+                    _sta = _net.WLAN(_net.STA_IF)
+                    _sta.active(True)
+                    _mac_bytes = _sta.config('mac')
+                    _esp_now_mac = ':'.join('%02x' % b for b in _mac_bytes)
                     publish_msg(status_topic, {
                         "client_id": client_id,
                         "status": "online",
                         "timestamp": config.get_unix_time(),
-                        "fw_ver": cfg.get("client", {}).get("firmware_version", "hub_v1.0.0")
+                        "fw_ver": cfg.get("client", {}).get("firmware_version", "hub_v1.0.0"),
+                        "esp_now_mac": _esp_now_mac
                     }, retain=True)
                 else:
                     print("ERROR: 'site' not set in config. Cannot publish hub status.")
