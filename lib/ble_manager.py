@@ -132,7 +132,8 @@ def update_device_config(data):
     if "timestamp" in data:
         try:
             ts = data["timestamp"]
-            tm = time.gmtime(ts)
+            # Convert Unix epoch (1970) to MicroPython epoch (2000)
+            tm = time.gmtime(ts - 946684800)
             rtc = machine.RTC()
             rtc.datetime((tm[0], tm[1], tm[2], tm[6], tm[3], tm[4], tm[5], 0))
             print(f" RTC time initialized via BLE to: {time.localtime()}")

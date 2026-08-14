@@ -114,11 +114,8 @@ def send_espnow_msg(target_mac_str, msg_dict, routing_path=None, target_id=None)
         "msg_type": msg_type,
         "timestamp": int(config.get_unix_time()),
         "route": {
-            "transport": "ESPNOW",
-            "route_id": f"route_to_{target_id or target_mac_str}",
-            "current_hop_index": 0,
-            "hops": routing_path,
-            "link_diagnostics": []
+            "route_id": "to_node",
+            "hops": routing_path
         },
         "data": data_payload
     }

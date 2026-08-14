@@ -120,20 +120,18 @@ def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
 
     # Get pre-provisioned route or dynamic fallback
     route_id, hops = get_route_for_target(target_id, target_mac)
+    if is_broadcast:
+        hops = ["ff:ff:ff:ff:ff:ff"]
 
     envelope = {
         "source": source_id,
-        "target": target_id,
-        "msg_type": "STATUS" if msg_type == "PAIR_REQ" else msg_type,
+        "dst": target_id,
+        "t": "STATUS" if msg_type == "PAIR_REQ" else msg_type,
         "timestamp": int(time.time()),
         "route": {
-            "transport": "ESPNOW",
-            "route_id": route_id,
-            "current_hop_index": 0,
-            "hops": hops,
-            "link_diagnostics": []
+            "hops": hops
         },
-        "data": payload
+        "pld": payload
     }
 
     next_hop = hops[0]
