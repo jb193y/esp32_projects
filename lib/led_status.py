@@ -27,6 +27,7 @@ def set_status(new_status):
 PATTERNS = {
     "OFF": ((0, 1000), (0, 1000)),
     "BLE_PROVISIONING": ((150, 150), (150, 150)),  # Rapid pairing blink
+    "START_DISCOVERY": ((200, 200), (200, 200)),  # Rapid discovery blink (Magenta)
     "BLE_CONNECTED": ((400, 100), (400, 100)),     # High-duty pulse when phone connected
     "WIFI_CONNECTING": ((100, 100), (0, 1000)),
     "WIFI_CONNECTED": ((100, 1900), (0, 1000)),   # Short pulse  Wi-Fi up, MQTT pending
@@ -42,6 +43,7 @@ PATTERNS = {
 # Color palette for NeoPixel RGB LEDs
 NEO_COLORS = {
     "BLE_PROVISIONING": (0, 0, 255),    # Blue (Blinking)
+    "START_DISCOVERY": (255, 0, 255),   # Magenta / Purple (Mesh Discovery Active)
     "BLE_CONNECTED": (0, 255, 255),     # Cyan
     "WIFI_CONNECTING": (255, 165, 0),   # Orange
     "WIFI_CONNECTED": (0, 255, 0),      # Green

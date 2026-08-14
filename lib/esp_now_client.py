@@ -176,12 +176,6 @@ def send_pairing_request():
     if _e is None:
         return
 
-    channels = [4, 6, 1, 11]
-    ch = channels[_pair_channel_idx % len(channels)]
-    _pair_channel_idx += 1
-    
-    set_wifi_channel(ch)
-
     cfg = config.load_config()
     client_cfg = cfg.get("client", {})
     node_type = client_cfg.get("type", "client").upper()
@@ -191,8 +185,23 @@ def send_pairing_request():
         "node_id": client_cfg.get("id", ""),
         "custom_name": client_cfg.get("custom_name", "Client Node")
     }
-    print(f"Sending PAIR_REQ from {node_type} to broadcast on Channel {ch}...")
-    send_ack_or_tele_to_hub("STATUS", payload, target_mac="ff:ff:ff:ff:ff:ff")
+
+    # Dynamic Mesh Multi-Channel Scanning:
+    # If already paired and we have a valid parent/hub MAC, send unicast on configured channel
+    hub_mac = cfg.get("hub", {}).get("mac", "")
+    is_valid_mac = is_paired() and len(hub_mac) == 17 and hub_mac.count(':') == 5
+
+    if is_valid_mac:
+        print(f"Sending PAIR_REQ unicast to Hub {hub_mac}...")
+        send_ack_or_tele_to_hub("STATUS", payload, target_mac=hub_mac)
+    else:
+        # Multi-Channel Mesh Scanning: cycle channels (4, 6, 1, 11) to discover nearby Hub/Repeater
+        channels = [4, 6, 1, 11]
+        ch = channels[_pair_channel_idx % len(channels)]
+        _pair_channel_idx += 1
+        set_wifi_channel(ch)
+        print(f"Scanning Channel {ch}: Broadcasting PAIR_REQ from {node_type}...")
+        send_ack_or_tele_to_hub("STATUS", payload, target_mac="ff:ff:ff:ff:ff:ff")
 
 
 def init_espnow_client(on_cmd_received_fn=None):

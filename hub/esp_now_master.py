@@ -295,6 +295,10 @@ def espnow_receiver_thread(heartbeats=None):
 
     _e = espnow.ESPNow()
     _e.active(True)
+    try:
+        _e.config(rxbuf=1024)
+    except Exception as ex:
+        print("rxbuf config notice:", ex)
 
     # Explicitly register broadcast peer so MicroPython delivers full broadcast packets
     add_peer_safe(_e, b'\xff\xff\xff\xff\xff\xff')
