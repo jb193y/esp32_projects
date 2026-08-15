@@ -62,7 +62,13 @@ def monitor_thread():
                             except Exception:
                                 pass
 
-                        time.sleep(1)
+                        try:
+                            import sys
+                            sys.stdout.write("\r\n--- FACTORY RESET REBOOTING ESP32 ---\r\n")
+                            sys.stdout.flush()
+                        except Exception:
+                            pass
+                        time.sleep_ms(300)
                         machine.reset()
                 else:
                     held_time[pin_num] = 0

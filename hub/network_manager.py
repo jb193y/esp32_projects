@@ -16,6 +16,10 @@ def is_connected():
 def connect_wifi(networks, timeout=15):
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
+    try:
+        wlan.config(pm=network.WLAN.PM_NONE)
+    except:
+        pass
     
     if wlan.isconnected():
         return True
@@ -52,9 +56,12 @@ def wan_thread(heartbeats=None):
     
     cfg = config.load_config()
     networks = cfg.get("wifi", {}).get("networks", [])
-    
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
+    try:
+        wlan.config(pm=network.WLAN.PM_NONE)
+    except:
+        pass
     
     while True:
         if heartbeats is not None:

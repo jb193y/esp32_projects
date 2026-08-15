@@ -42,43 +42,47 @@ def set_paired(val):
     global _paired
     _paired = val
 
-def add_peer_safe(e, peer_bytes):
-    try:
-        peers_list = e.peers() if callable(getattr(e, 'peers', None)) else e.peers
-        peer_macs = [bytes(p[0]) for p in peers_list]
-    except Exception:
-        peer_macs = []
-
+def add_peer_safe(e, peer_bytes, channel=0):
     peer_bytes = bytes(peer_bytes)
-
-    if peer_bytes in peer_macs:
-        return
-
     try:
-        e.add_peer(peer_bytes)
-    except OSError as err:
-        print(" ESP-NOW Peer limit reached, cleaning up...")
+        e.del_peer(peer_bytes)
+    except:
+        pass
+    try:
+        e.add_peer(peer_bytes, channel)
+    except Exception as err:
         try:
-            peers_list = e.peers() if callable(getattr(e, 'peers', None)) else e.peers
+            peers_list = e.peers() if callable(getattr(e, 'peers', None)) else (e.peers if hasattr(e, 'peers') else [])
+            if not peers_list and hasattr(e, 'get_peers'):
+                peers_list = e.get_peers()
         except:
             peers_list = []
         if peers_list:
             try:
                 e.del_peer(peers_list[0][0])
-                e.add_peer(peer_bytes)
-            except Exception as ex:
-                print(" Failed to resolve peer slots:", ex)
-                raise err
+                e.add_peer(peer_bytes, channel)
+            except Exception:
+                try:
+                    e.add_peer(peer_bytes)
+                except Exception:
+                    pass
 
 def parse_packet(payload_str):
     p = ujson.loads(payload_str)
     msg_type = p.get("msg_type") or p.get("t")
     target = p.get("target") or p.get("dst", "")
-    source = p.get("source")
-    route = p.get("route", {})
-    hops = route.get("hops", p.get("routing_path", p.get("path", [])))
-    current_hop_index = route.get("current_hop_index", p.get("current_hop_index", p.get("hop", 0)))
-    data = p.get("data", p.get("payload", p.get("pld", {})))
+    source = p.get("source") or p.get("src")
+    
+    route = p.get("route") or p.get("rt", {})
+    hops = route.get("hops") if isinstance(route, dict) else []
+    if not hops:
+        hops = p.get("routing_path") or p.get("path") or []
+        
+    current_hop_index = route.get("current_hop_index") if isinstance(route, dict) else 0
+    if current_hop_index == 0:
+        current_hop_index = p.get("current_hop_index") or p.get("hop", 0)
+        
+    data = p.get("data") or p.get("payload") or p.get("pld", {})
     return {
         "msg_type": msg_type,
         "target": target,
@@ -138,11 +142,11 @@ def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
         hops = ["ff:ff:ff:ff:ff:ff"]
 
     envelope = {
-        "source": source_id,
+        "src": source_id,
         "dst": target_id,
         "t": "STATUS" if msg_type == "PAIR_REQ" else msg_type,
-        "timestamp": int(time.time()),
-        "route": {
+        "ts": int(time.time()),
+        "rt": {
             "hops": hops
         },
         "pld": payload
@@ -155,9 +159,10 @@ def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
         add_peer_safe(_e, next_hop_bytes)
         payload_str = ujson.dumps(envelope)
         try:
-            _e.send(next_hop_bytes, payload_str.encode('utf-8'))
-            print(f" Envelope sent to next hop {next_hop} for destination {target_id}")
-            return True
+            res = _e.send(next_hop_bytes, payload_str.encode('utf-8'))
+            print(f" Envelope sent to next hop {next_hop} for destination {target_id} (res={res})")
+            print(payload_str.encode('utf-8'))
+            return res
         except Exception as send_err:
             print(f" ESP-NOW send notice to {next_hop}: {send_err}")
             return False
@@ -214,6 +219,13 @@ def init_espnow_client(on_cmd_received_fn=None):
     client_name = cfg.get("client", {}).get("custom_name", "Client Node")
     print(f" Initializing {client_name} ESP-NOW Client...")
     
+    # Deactivate AP interface to force ESP-NOW to bind to STA interface
+    try:
+        ap = network.WLAN(network.AP_IF)
+        ap.active(False)
+    except:
+        pass
+        
     ch = cfg.get("wifi", {}).get("channel", 4)
     set_wifi_channel(ch)
     
@@ -237,12 +249,19 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
     client_cfg = cfg.get("client", {})
     local_id = client_cfg.get("id", "").lower()
     
+    last_hub_rx_time = time.time()
+    
     while True:
         if heartbeats is not None:
             heartbeats["esp_now"] = time.time()
             
+        # Fallback to scanning if we lose contact with our paired Hub for 45s
+        if _paired and time.time() - last_hub_rx_time > 45:
+            print(" Lost contact with Hub for 45s. Re-entering scanning mode...")
+            _paired = False
+            
         try:
-            host, msg = _e.recv(200)
+            host, msg = _e.recv(500)
             if host and msg:
                 sender_mac = bytes_to_mac(host)
                 payload_str = msg.decode('utf-8')
@@ -259,34 +278,34 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                 else:
                     is_for_us = (msg_type == "CMD" or msg_type == "ACK" or msg_type == "COMMAND")
 
-                if msg_type == "BEACON" and not _paired:
-                    b_pld = packet.get("data", {})
+                # Handle BEACON packets
+                if msg_type == "BEACON":
+                    b_pld = packet.get("data") or packet.get("pld", {})
                     hub_mac = b_pld.get("hub_mac", sender_mac)
                     parent_mac = b_pld.get("sender_mac", sender_mac)
                     b_ch = b_pld.get("channel")
-                    print(f" Received Discovery BEACON from {parent_mac} (Hub: {hub_mac}, Channel: {b_ch})")
-                    try:
-                        upd = {"hub": {"mac": hub_mac}, "parent": {"mac": parent_mac}}
-                        if b_ch:
-                            upd["wifi"] = {"channel": b_ch}
-                            set_wifi_channel(b_ch)
-                        config.update_config(upd)
-                        # Immediately send pairing STATUS to chosen parent
-                        client_cfg = config.load_config().get("client", {})
-                        pld = {
-                            "status": "pairing_request",
-                            "node_type": client_cfg.get("type", "VALVE").upper(),
-                            "node_id": client_cfg.get("id", ""),
-                            "custom_name": client_cfg.get("custom_name", "Client Node")
-                        }
-                        send_ack_or_tele_to_hub("STATUS", pld, target_mac=parent_mac)
-                    except Exception as b_ex:
-                        print("Error handling discovery BEACON:", b_ex)
+                    
+                    current_cfg = config.load_config()
+                    paired_hub = current_cfg.get("hub", {}).get("mac", "")
+                    is_our_hub = (hub_mac.lower().replace(':', '') == paired_hub.lower().replace(':', ''))
+                    
+                    if not _paired or (is_our_hub and b_ch and current_cfg.get("wifi", {}).get("channel") != b_ch):
+                        print(f" Received BEACON from {'paired ' if _paired else ''}Hub {hub_mac} (Channel: {b_ch})")
+                        last_hub_rx_time = time.time()
+                        try:
+                            upd = {"hub": {"mac": hub_mac}, "parent": {"mac": parent_mac}}
+                            if b_ch:
+                                upd["wifi"] = {"channel": b_ch}
+                                set_wifi_channel(b_ch)
+                            config.update_config(upd)
+                        except Exception as b_ex:
+                            print("Error handling BEACON:", b_ex)
 
                 if msg_type == "ACK" and is_for_us:
-                    ack_pld = packet.get("data", {})
+                    ack_pld = packet.get("data") or packet.get("pld", {})
                     if ack_pld.get("status") == "paired":
                         _paired = True
+                        last_hub_rx_time = time.time()
                         hub_mac = ack_pld.get("hub_mac", sender_mac)
                         hub_ch = ack_pld.get("channel")
                         print(f"Client paired successfully with Hub ({hub_mac}) on Channel {hub_ch}!")
@@ -301,9 +320,15 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                 
                 # Relaying and target validation
                 is_actually_for_us = relay_engine.process_and_relay(packet)
+                
+                # Update RX timestamp if packet is from Hub
+                current_cfg = config.load_config()
+                paired_hub = current_cfg.get("hub", {}).get("mac", "")
+                if sender_mac.lower().replace(':', '') == paired_hub.lower().replace(':', ''):
+                    last_hub_rx_time = time.time()
                     
                 if is_actually_for_us and (msg_type == "COMMAND" or msg_type == "CMD") and on_cmd_received_fn is not None:
-                    payload = packet.get("data", {})
+                    payload = packet.get("data") or packet.get("pld", {})
                     cmd = payload.get("cmd") or payload.get("command")
                     
                     payload["sender_mac"] = sender_mac

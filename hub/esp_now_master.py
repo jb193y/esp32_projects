@@ -11,6 +11,48 @@ import scheduler
 
 _e = None
 NODES_FILE = "nodes.json"
+# Per-sender receive buffers to assemble fragmented ESP-NOW packets
+recv_buffers = {}
+recv_last_seen = {}
+
+def _extract_json_objects_from_bytes(b):
+    """Return (list_of_byte_objects, remainder_bytes).
+    Uses a simple state machine to find balanced top-level JSON objects.
+    Handles string escapes so braces inside strings don't break parsing.
+    """
+    objs = []
+    start = None
+    depth = 0
+    in_str = False
+    esc = False
+    last_end = 0
+    for i in range(len(b)):
+        ch = chr(b[i])
+        if esc:
+            esc = False
+            continue
+        if ch == '\\':
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == '}':
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    objs.append(b[start:i+1])
+                    last_end = i+1
+                    start = None
+
+    remainder = b[last_end:]
+    return objs, remainder
 
 def mac_to_bytes(mac_str):
     return bytes(int(x, 16) for x in mac_str.split(':'))
@@ -44,42 +86,48 @@ def save_node(mac_str, node_type, node_id=None, name=None):
     print(f" Node saved to registry: {mac_str} -> {node_type}")
     return nodes[mac_str]
 
-def add_peer_safe(e, peer_bytes):
+def add_peer_safe(e, peer_bytes, channel=0):
     """Add ESP-NOW peer, removing oldest if peer table is full."""
     peer_bytes = bytes(peer_bytes)
     try:
-        peers_list = e.peers() if callable(getattr(e, 'peers', None)) else e.peers
-        peer_macs = [bytes(p[0]) for p in peers_list]
-    except Exception:
-        peer_macs = []
-
-    if peer_bytes in peer_macs:
-        return  # already registered
-
+        e.del_peer(peer_bytes)
+    except:
+        pass
     try:
-        e.add_peer(peer_bytes)
-    except OSError:
-        print("ESP-NOW Peer limit reached, cleaning up oldest peer...")
+        e.add_peer(peer_bytes, channel)
+    except Exception as err:
         try:
-            peers_list = e.peers() if callable(getattr(e, 'peers', None)) else e.peers
-        except Exception:
+            peers_list = e.peers() if callable(getattr(e, 'peers', None)) else (e.peers if hasattr(e, 'peers') else [])
+            if not peers_list and hasattr(e, 'get_peers'):
+                peers_list = e.get_peers()
+        except:
             peers_list = []
         if peers_list:
             try:
-                e.del_peer(bytes(peers_list[0][0]))
-                e.add_peer(peer_bytes)
-            except Exception as ex:
-                print("Failed to resolve peer slots:", ex)
+                e.del_peer(peers_list[0][0])
+                e.add_peer(peer_bytes, channel)
+            except Exception:
+                try:
+                    e.add_peer(peer_bytes)
+                except Exception:
+                    pass
 
 def parse_packet(payload_str):
     p = ujson.loads(payload_str)
     msg_type = p.get("msg_type") or p.get("t")
     target = p.get("target") or p.get("dst", "")
-    source = p.get("source")
-    route = p.get("route", {})
-    hops = route.get("hops", p.get("routing_path", p.get("path", [])))
-    current_hop_index = route.get("current_hop_index", p.get("current_hop_index", p.get("hop", 0)))
-    data = p.get("data", p.get("payload", p.get("pld", {})))
+    source = p.get("source") or p.get("src")
+    
+    route = p.get("route") or p.get("rt", {})
+    hops = route.get("hops") if isinstance(route, dict) else []
+    if not hops:
+        hops = p.get("routing_path") or p.get("path") or []
+        
+    current_hop_index = route.get("current_hop_index") if isinstance(route, dict) else 0
+    if current_hop_index == 0:
+        current_hop_index = p.get("current_hop_index") or p.get("hop", 0)
+        
+    data = p.get("data") or p.get("payload") or p.get("pld", {})
     return {
         "msg_type": msg_type,
         "target": target,
@@ -109,15 +157,15 @@ def send_espnow_msg(target_mac_str, msg_dict, routing_path=None, target_id=None)
     data_payload = msg_dict.get("payload", {})
 
     envelope = {
-        "source": hub_id,
-        "target": target_id or target_mac_str,
-        "msg_type": msg_type,
-        "timestamp": int(config.get_unix_time()),
-        "route": {
+        "src": hub_id,
+        "dst": target_id or target_mac_str,
+        "t": msg_type,
+        "ts": int(config.get_unix_time()),
+        "rt": {
             "route_id": "to_node",
             "hops": routing_path
         },
-        "data": data_payload
+        "pld": data_payload
     }
 
     next_hop_mac_str = routing_path[0]
@@ -143,6 +191,11 @@ def start_mesh_discovery(duration_sec=60):
     global _discovery_active_until
     _discovery_active_until = config.get_unix_time() + duration_sec
     print(f" Mesh Discovery Mode STARTED for {duration_sec} seconds!")
+    try:
+        import led_status
+        led_status.set_status("START_DISCOVERY")
+    except Exception as e:
+        print(" Failed to set LED status to START_DISCOVERY:", e)
 
 def dispatch_command_from_mqtt(target_node, command, routing_path, args):
     """
@@ -291,6 +344,13 @@ def espnow_receiver_thread(heartbeats=None):
     global _e
     print(" ESP-NOW Master Receiver Thread Started")
 
+    # Deactivate AP interface to force ESP-NOW to bind to STA interface
+    try:
+        ap = network.WLAN(network.AP_IF)
+        ap.active(False)
+    except:
+        pass
+
     sta = network.WLAN(network.STA_IF)
 
     _e = espnow.ESPNow()
@@ -304,6 +364,7 @@ def espnow_receiver_thread(heartbeats=None):
     add_peer_safe(_e, b'\xff\xff\xff\xff\xff\xff')
 
     _last_beacon_time = 0
+    was_discovery_active = False
 
     while True:
         if heartbeats is not None:
@@ -311,6 +372,14 @@ def espnow_receiver_thread(heartbeats=None):
 
         now = config.get_unix_time()
         if now < _discovery_active_until:
+            if not was_discovery_active:
+                was_discovery_active = True
+                try:
+                    import led_status
+                    led_status.set_status("START_DISCOVERY")
+                except:
+                    pass
+
             if now - _last_beacon_time >= 1.5:
                 _last_beacon_time = now
                 try:
@@ -319,21 +388,16 @@ def espnow_receiver_thread(heartbeats=None):
                     active_ch = 4
                 hub_mac_str = bytes_to_mac(sta.config('mac'))
                 beacon_pkt = {
-                    "source": "hub_master_01",
-                    "target": "broadcast",
-                    "msg_type": "BEACON",
-                    "timestamp": int(config.get_unix_time()),
-                    "route": {
-                        "transport": "ESPNOW",
-                        "route_id": "beacon",
-                        "current_hop_index": 0,
-                        "hops": ["ff:ff:ff:ff:ff:ff"],
-                        "link_diagnostics": []
+                    "src": "hub_master_01",
+                    "dst": "broadcast",
+                    "t": "BEACON",
+                    "ts": int(config.get_unix_time()),
+                    "rt": {
+                        "hops": ["ff:ff:ff:ff:ff:ff"]
                     },
-                    "data": {
+                    "pld": {
                         "hub_mac": hub_mac_str,
                         "sender_mac": hub_mac_str,
-                        "hop_count": 0,
                         "channel": active_ch
                     }
                 }
@@ -343,6 +407,14 @@ def espnow_receiver_thread(heartbeats=None):
                     print(f" Sent Discovery BEACON on Channel {active_ch}")
                 except Exception as b_err:
                     print(" Beacon send notice:", b_err)
+        else:
+            if was_discovery_active:
+                was_discovery_active = False
+                try:
+                    import led_status
+                    led_status.set_status("MQTT_CONNECTED")
+                except:
+                    pass
 
         try:
             host, msg = _e.recv(500)
@@ -351,10 +423,51 @@ def espnow_receiver_thread(heartbeats=None):
                 continue
 
             sender_mac_str = bytes_to_mac(host)
-            payload_str = msg.decode('utf-8')
-            print(f"ESP-NOW Raw packet from {sender_mac_str}: {payload_str}")
+            # Append incoming bytes to per-sender buffer (handles fragmentation)
+            buf = recv_buffers.get(sender_mac_str, b'') + bytes(msg)
+            recv_buffers[sender_mac_str] = buf
+            recv_last_seen[sender_mac_str] = now
 
-            packet = parse_packet(payload_str)
+            print(f"ESP-NOW Raw bytes: len={len(msg)} repr={repr(msg)} (buf_len={len(buf)})")
+
+            # Attempt to extract any complete JSON objects from the buffer.
+            try:
+                objs, remainder = _extract_json_objects_from_bytes(buf)
+            except Exception as ex:
+                print(f"JSON extraction error for {sender_mac_str}: {ex}")
+                # If extractor fails, drop the buffer to avoid lockup
+                recv_buffers[sender_mac_str] = b''
+                continue
+
+            if not objs:
+                # No complete JSON yet. If buffer is too large or stale, drop it.
+                buf_len = len(buf)
+                last_seen = recv_last_seen.get(sender_mac_str, now)
+                if buf_len > 4096 or (now - last_seen) > 5:
+                    print(f"Dropping stale/incomplete buffer from {sender_mac_str} (len={buf_len})")
+                    recv_buffers[sender_mac_str] = b''
+                else:
+                    # wait for more fragments
+                    pass
+                continue
+
+            # Process each complete JSON object found
+            for obj_bytes in objs:
+                try:
+                    payload_str = obj_bytes.decode('utf-8')
+                except Exception:
+                    payload_str = obj_bytes.decode('utf-8', 'ignore')
+                try:
+                    packet = parse_packet(payload_str)
+                except Exception as parse_exc:
+                    print(f"Failed to parse JSON object from {sender_mac_str}: {parse_exc}")
+                    continue
+
+                # At this point we have a parsed `packet` — continue processing below
+
+            # Save remainder back into buffer for next fragments
+            recv_buffers[sender_mac_str] = remainder
+            recv_last_seen[sender_mac_str] = now
             msg_type = packet.get("msg_type")
             target = packet.get("target", "")
             source = packet.get("source")

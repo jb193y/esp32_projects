@@ -10,6 +10,48 @@ import network_manager
 _client = None
 _lock = _thread.allocate_lock()
 _is_connected = False
+_provision_confirmed = False
+_timer_started = False
+
+def _provision_confirmation_timer_bg():
+    global _provision_confirmed
+    print(" Provision confirmation countdown started (90s window)...")
+    try:
+        led_status.set_status("START_DISCOVERY")
+    except Exception:
+        pass
+
+    start_t = time.time()
+    while time.time() - start_t < 90:
+        if _provision_confirmed:
+            print(" Provision confirmation timer canceled (confirmed successfully!).")
+            return
+        time.sleep(1)
+
+    if not _provision_confirmed:
+        print(" Provision confirmation TIMEOUT (90s elapsed without API claim confirmation)!")
+        print(" Auto-resetting device back to BLE Provisioning mode...")
+        try:
+            cfg = config.load_config()
+            cfg.setdefault("client", {})["mode"] = "ble_setup"
+            with open("config.json", "w") as f:
+                ujson.dump(cfg, f)
+        except Exception as ex:
+            print(" Config reset notice:", ex)
+
+        try:
+            import sys
+            sys.stdout.write("\r\n--- REBOOTING ESP32 TO BLE SETUP ---\r\n")
+            sys.stdout.flush()
+        except Exception:
+            pass
+        time.sleep_ms(300)
+
+        try:
+            import machine
+            machine.reset()
+        except Exception:
+            pass
 
 # Callback from esp_now_master to dispatch commands
 _cmd_dispatcher = None
@@ -83,6 +125,12 @@ def on_message(topic, msg):
                             command = "HUB_ENABLE" if state_data["hub_status"] == "Enabled" else "HUB_DISABLE"
                         elif "command" in state_data:
                             command = state_data["command"]
+                        elif "cmd" in state_data:
+                            command = state_data["cmd"]
+            
+            # Resolve to string if command is still a dictionary
+            if isinstance(command, dict):
+                command = command.get("cmd") or command.get("command")
         else:
             # Fallback legacy parsing
             target_device = payload.get("device_id")
@@ -155,7 +203,14 @@ def on_message(topic, msg):
         print(f"Published RECEIVED_BY_HUB ACK for {target_device}:{command}")
 
         if target_device == client_id:
-            if command in ("HUB_ENABLE", "HUB_DISABLE"):
+            if command in ("CONFIRM_PROVISION", "confirm_provision"):
+                global _provision_confirmed
+                _provision_confirmed = True
+                print(" Provisioning confirmed via MQTT! System fully operational.")
+                config.update_config({"client": {"mode": "normal"}})
+                led_status.set_status("MQTT_CONNECTED")
+                publish_hub_telemetry("PROVISION_CONFIRMED")
+            elif command in ("HUB_ENABLE", "HUB_DISABLE"):
                 status_val = "Enabled" if command == "HUB_ENABLE" else "Disabled"
                 config.update_config({"client": {"status": status_val}})
                 publish_hub_telemetry(status_val)
@@ -251,7 +306,20 @@ def mqtt_thread(heartbeats=None):
                     print("Failed to set Last Will:", lwt_err)
 
                 _client.set_callback(on_message)
-                _client.connect()
+                
+                # Temporarily patch socket.socket to enforce a 3-second connection timeout
+                import socket
+                _orig_socket = socket.socket
+                def patched_socket(*args, **kwargs):
+                    s = _orig_socket(*args, **kwargs)
+                    s.settimeout(3.0)
+                    return s
+                socket.socket = patched_socket
+                
+                try:
+                    _client.connect()
+                finally:
+                    socket.socket = _orig_socket
                 _is_connected = True
                 led_status.set_status("MQTT_CONNECTED")
                 print(" MQTT Connected!")
@@ -283,6 +351,14 @@ def mqtt_thread(heartbeats=None):
                 # Publish initial Hub status telemetry
                 hub_status = cfg.get("client", {}).get("status", "Enabled")
                 publish_hub_telemetry(hub_status)
+
+                # Check if device is pending provision confirmation
+                global _timer_started
+                client_mode = cfg.get("client", {}).get("mode", "normal")
+                if client_mode != "normal" and not _provision_confirmed and not _timer_started:
+                    _timer_started = True
+                    print(" Waiting for MQTT command 'CONFIRM_PROVISION' from backend API...")
+                    _thread.start_new_thread(_provision_confirmation_timer_bg, ())
                 
             except Exception as e:
                 print("MQTT connection failed:", e)

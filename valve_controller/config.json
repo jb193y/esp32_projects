@@ -1,7 +1,8 @@
+{
   "client": {
     "id": "valve_node_01",
     "type": "valve",
-    "custom_name": "AgriPulse Valve Controller",
+    "custom_name": "Valve Node 01",
     "firmware_version": "valve_v1.0.0",
     "mode": "normal",
     "site": "loc001",
@@ -18,30 +19,22 @@
       "1": {
         "solenoid_open": 4,
         "solenoid_close": 5,
-        "led_off": 6,
-        "led_on": 7,
-        "led_fault": 15
+        "status_led": 7
       },
       "2": {
         "solenoid_open": 16,
         "solenoid_close": 17,
-        "led_off": 18,
-        "led_on": 8,
-        "led_fault": 3
+        "status_led": 8
       },
       "3": {
         "solenoid_open": 9,
         "solenoid_close": 10,
-        "led_off": 11,
-        "led_on": 12,
-        "led_fault": 13
+        "status_led": 12
       },
       "4": {
         "solenoid_open": 14,
         "solenoid_close": 21,
-        "led_off": 38,
-        "led_on": 39,
-        "led_fault": 40
+        "status_led": 39
       }
     }
   ]

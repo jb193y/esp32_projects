@@ -40,21 +40,21 @@ PATTERNS = {
     "RESTART_DELAY": ((500, 500), (0, 1000)),
 }
 
-# Color palette for NeoPixel RGB LEDs
+# Color palette for NeoPixel RGB LEDs (Distinct visual indicator for each state)
 NEO_COLORS = {
-    "BLE_PROVISIONING": (0, 0, 255),    # Blue (Blinking)
-    "START_DISCOVERY": (255, 0, 255),   # Magenta / Purple (Mesh Discovery Active)
-    "BLE_CONNECTED": (0, 255, 255),     # Cyan
-    "WIFI_CONNECTING": (255, 165, 0),   # Orange
-    "WIFI_CONNECTED": (0, 255, 0),      # Green
-    "MQTT_CONNECTED": (0, 255, 0),      # Green
-    "VALVE_OPEN": (0, 255, 0),          # Green
-    "VALVE_CLOSED": (0, 30, 0),         # Dim Green / Quiet
-    "NORMAL_OFF": (0, 30, 0),           # Dim Green / Quiet
-    "RUNNING": (0, 255, 0),             # Green
-    "FAULT": (255, 0, 0),               # Red
-    "RESTART_DELAY": (255, 165, 0),     # Orange
-    "OFF": (0, 0, 0),
+    "BLE_PROVISIONING": (0, 0, 255),    # Blue (Blinking - BLE setup pairing mode)
+    "BLE_CONNECTED": (0, 255, 255),     # Cyan / Aqua (Pulse - Mobile app connected)
+    "START_DISCOVERY": (255, 0, 255),   # Magenta / Purple (Rapid Blink - Mesh Discovery mode active)
+    "WIFI_CONNECTING": (255, 128, 0),   # Amber / Orange (Fast Pulse - Connecting to Wi-Fi)
+    "WIFI_CONNECTED": (255, 255, 0),    # Yellow (Pulse - Wi-Fi connected, reaching MQTT)
+    "MQTT_CONNECTED": (0, 255, 0),      # Solid Green (Fully online & operational)
+    "VALVE_OPEN": (0, 255, 128),        # Lime Green (Pulse - Solenoid Valve open/active)
+    "VALVE_CLOSED": (15, 15, 0),        # Soft Warm Dim (Idle standby)
+    "NORMAL_OFF": (0, 15, 15),          # Soft Teal Dim (Normal mode quiet idle)
+    "RUNNING": (0, 255, 0),             # Pure Green (Operational)
+    "FAULT": (255, 0, 0),               # Red (Blink/Solid - Fault alarm)
+    "RESTART_DELAY": (255, 64, 0),      # Coral Deep Orange (Blink - Restart countdown)
+    "OFF": (0, 0, 0),                   # Off
 }
 
 def led_thread():

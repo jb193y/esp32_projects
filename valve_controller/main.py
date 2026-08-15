@@ -43,23 +43,15 @@ def update_valve_leds(valve_id):
         return
     state = valve.get("state", "CLOSED")
     
-    led_on = valve.get("led_on_pin")
-    led_off = valve.get("led_off_pin")
-    led_fault = valve.get("led_fault_pin")
+    status_led = valve.get("status_led_pin")
     
-    # RGB/Multicolor LED status logic
-    if state == "FAULT":
-        if led_on: led_on.value(0)
-        if led_off: led_off.value(0)
-        if led_fault: led_fault.value(1) # Shines Blue/Fault color
-    elif state == "OPEN":
-        if led_on: led_on.value(1)      # Shines Green/ON color
-        if led_off: led_off.value(0)
-        if led_fault: led_fault.value(0)
-    else: # CLOSED
-        if led_on: led_on.value(0)
-        if led_off: led_off.value(1)     # Shines Red/OFF color
-        if led_fault: led_fault.value(0)
+    if status_led:
+        if state == "OPEN":
+            status_led.value(1)
+        elif state == "FAULT":
+            status_led.value(1)
+        else: # CLOSED
+            status_led.value(0)
 
     # Update main system status LED based on overall node state
     any_fault = any(v.get("state") == "FAULT" for v in valves.values())
@@ -250,18 +242,14 @@ def main():
     for vid, pins in valves_map.items():
         open_pin_num = pins.get("solenoid_open")
         close_pin_num = pins.get("solenoid_close")
-        led_on_num = pins.get("led_on")
-        led_off_num = pins.get("led_off")
-        led_fault_num = pins.get("led_fault")
+        status_led_num = pins.get("status_led")
         
         # Solenoids
         open_pin = machine.Pin(open_pin_num, machine.Pin.OUT) if open_pin_num is not None else None
         close_pin = machine.Pin(close_pin_num, machine.Pin.OUT) if close_pin_num is not None else None
         
-        # LEDs
-        led_on_pin = machine.Pin(led_on_num, machine.Pin.OUT) if led_on_num is not None else None
-        led_off_pin = machine.Pin(led_off_num, machine.Pin.OUT) if led_off_num is not None else None
-        led_fault_pin = machine.Pin(led_fault_num, machine.Pin.OUT) if led_fault_num is not None else None
+        # LED
+        status_led_pin = machine.Pin(status_led_num, machine.Pin.OUT) if status_led_num is not None else None
         
         if open_pin: open_pin.value(0)
         if close_pin: close_pin.value(0)
@@ -270,9 +258,7 @@ def main():
             "state": saved_states.get(str(vid), "CLOSED"),
             "solenoid_open_pin": open_pin,
             "solenoid_close_pin": close_pin,
-            "led_on_pin": led_on_pin,
-            "led_off_pin": led_off_pin,
-            "led_fault_pin": led_fault_pin
+            "status_led_pin": status_led_pin
         }
         
         # Initialize LEDs status

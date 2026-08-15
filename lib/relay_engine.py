@@ -19,30 +19,47 @@ def init_relay_engine(espnow_instance):
     global _e
     _e = espnow_instance
 
-def add_peer_safe(e, peer_bytes):
+def add_peer_safe(e, peer_bytes, channel=0):
+    peer_bytes = bytes(peer_bytes)
     try:
-        e.add_peer(peer_bytes)
+        e.del_peer(peer_bytes)
+    except:
+        pass
+    try:
+        e.add_peer(peer_bytes, channel)
     except Exception as err:
-        err_str = str(err)
-        if "EXIST" in err_str or "17" in err_str or "116" in err_str or "12301" in err_str:
-            return
         try:
-            peers = e.get_peers() if hasattr(e, 'get_peers') else []
-            if peers:
-                e.del_peer(peers[0][0])
-                e.add_peer(peer_bytes)
-        except Exception:
-            pass
+            peers_list = e.peers() if callable(getattr(e, 'peers', None)) else (e.peers if hasattr(e, 'peers') else [])
+            if not peers_list and hasattr(e, 'get_peers'):
+                peers_list = e.get_peers()
+        except:
+            peers_list = []
+        if peers_list:
+            try:
+                e.del_peer(peers_list[0][0])
+                e.add_peer(peer_bytes, channel)
+            except Exception:
+                try:
+                    e.add_peer(peer_bytes)
+                except Exception:
+                    pass
 
 def parse_packet(payload_str):
     p = ujson.loads(payload_str)
     msg_type = p.get("msg_type") or p.get("t")
     target = p.get("target") or p.get("dst", "")
-    source = p.get("source")
-    route = p.get("route", {})
-    hops = route.get("hops", p.get("routing_path", p.get("path", [])))
-    current_hop_index = route.get("current_hop_index", p.get("current_hop_index", p.get("hop", 0)))
-    data = p.get("data", p.get("payload", p.get("pld", {})))
+    source = p.get("source") or p.get("src")
+    
+    route = p.get("route") or p.get("rt", {})
+    hops = route.get("hops") if isinstance(route, dict) else []
+    if not hops:
+        hops = p.get("routing_path") or p.get("path") or []
+        
+    current_hop_index = route.get("current_hop_index") if isinstance(route, dict) else 0
+    if current_hop_index == 0:
+        current_hop_index = p.get("current_hop_index") or p.get("hop", 0)
+        
+    data = p.get("data") or p.get("payload") or p.get("pld", {})
     return {
         "msg_type": msg_type,
         "target": target,

@@ -4,7 +4,7 @@
     "type": "valve",
     "controller_type": "YD-ESP32-S3 2022-V1.3",
     "board_type": "YD-ESP32-S3 2022-V1.3",
-    "custom_name": "AgriPulse Valve Controller",
+    "custom_name": "Valve Node 01",
     "firmware_version": "valve_v1.0.0",
     "mode": "ble_setup"
   },
@@ -17,32 +17,24 @@
   "valves": [
     {
       "1": {
-        "solenoid_open": 18,
-        "solenoid_close": 19,
-        "led_off": 21,
-        "led_on": 22,
-        "led_fault": 23
+        "solenoid_open": 4,
+        "solenoid_close": 5,
+        "status_led": 7
       },
       "2": {
-        "solenoid_open": 25,
-        "solenoid_close": 26,
-        "led_off": 27,
-        "led_on": 14,
-        "led_fault": 12
+        "solenoid_open": 16,
+        "solenoid_close": 17,
+        "status_led": 8
       },
       "3": {
-        "solenoid_open": 13,
-        "solenoid_close": 15,
-        "led_off": 16,
-        "led_on": 17,
-        "led_fault": 4
+        "solenoid_open": 9,
+        "solenoid_close": 10,
+        "status_led": 12
       },
       "4": {
-        "solenoid_open": 32,
-        "solenoid_close": 33,
-        "led_off": 5,
-        "led_on": 2,
-        "led_fault": 0
+        "solenoid_open": 14,
+        "solenoid_close": 21,
+        "status_led": 39
       }
     }
   ]

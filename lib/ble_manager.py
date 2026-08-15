@@ -140,10 +140,15 @@ def update_device_config(data):
         except Exception as e:
             print(" Failed to initialize RTC time from BLE:", e)
         
-    cfg.setdefault("client", {})["mode"] = "sta"
+    cfg.setdefault("client", {})["mode"] = "pending_confirm"
     
     config.save_config(cfg)
-    print(" Configuration saved. Rebooting device in 2 seconds...")
+    print(" Configuration saved. Rebooting device to start MQTT connection & claim confirmation...")
+    try:
+        import sys
+        sys.stdout.flush()
+    except Exception:
+        pass
 
 def start_provisioning():
     global ble_instance, write_handle, read_handle, pending_config
@@ -225,7 +230,14 @@ def start_provisioning():
                     pass
 
                 update_device_config(provision_data)
-                time.sleep(2)
+                time.sleep(1)
+                try:
+                    import sys
+                    sys.stdout.write("\r\n--- BLE PROVISIONING COMPLETE: REBOOTING ESP32 ---\r\n")
+                    sys.stdout.flush()
+                except Exception:
+                    pass
+                time.sleep_ms(300)
                 machine.reset()
             except Exception as e:
                 print("Failed to parse/apply BLE config payload:", e)
