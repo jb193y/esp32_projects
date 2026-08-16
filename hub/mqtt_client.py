@@ -377,7 +377,11 @@ def mqtt_thread(heartbeats=None):
                 
         # Check for incoming messages non-blockingly
         try:
-            _client.check_msg()
+            _lock.acquire()
+            try:
+                _client.check_msg()
+            finally:
+                _lock.release()
         except Exception as e:
             err_num = getattr(e, 'errno', None)
             if err_num not in (11, 110):

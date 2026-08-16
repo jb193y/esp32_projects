@@ -437,6 +437,15 @@ def espnow_receiver_thread(heartbeats=None):
                 continue
 
             sender_mac_str = bytes_to_mac(host)
+
+            # Check if the existing buffer is stale BEFORE appending the new message.
+            # If the last packet from this sender was received more than 5 seconds ago,
+            # discard incomplete contents to prevent corruption.
+            last_seen = recv_last_seen.get(sender_mac_str, now)
+            if now - last_seen > 5 and recv_buffers.get(sender_mac_str):
+                print(f"Clearing stale buffer from {sender_mac_str} (stale for {now - last_seen}s)")
+                recv_buffers[sender_mac_str] = b''
+
             # Append incoming bytes to per-sender buffer (handles fragmentation)
             buf = recv_buffers.get(sender_mac_str, b'') + bytes(msg)
             recv_buffers[sender_mac_str] = buf
@@ -454,15 +463,11 @@ def espnow_receiver_thread(heartbeats=None):
                 continue
 
             if not objs:
-                # No complete JSON yet. If buffer is too large or stale, drop it.
+                # No complete JSON yet. If buffer is too large, drop it.
                 buf_len = len(buf)
-                last_seen = recv_last_seen.get(sender_mac_str, now)
-                if buf_len > 4096 or (now - last_seen) > 5:
-                    print(f"Dropping stale/incomplete buffer from {sender_mac_str} (len={buf_len})")
+                if buf_len > 4096:
+                    print(f"Dropping oversized buffer from {sender_mac_str} (len={buf_len})")
                     recv_buffers[sender_mac_str] = b''
-                else:
-                    # wait for more fragments
-                    pass
                 continue
 
             # Process each complete JSON object found
