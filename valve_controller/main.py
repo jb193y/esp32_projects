@@ -190,6 +190,62 @@ def execute_command(cmd, args):
                 print("Blink LED error:", e)
         _thread.start_new_thread(_blink_valve_bg, ())
 
+    elif cmd == "OTA":
+        print("🚀 OTA command received! Initiating firmware update...")
+        try:
+            try:
+                esp_now_client._e.active(False)
+            except:
+                pass
+                
+            import network_manager
+            cfg = config.load_config()
+            wifi_networks = cfg.get("wifi", {}).get("networks", [])
+            if not wifi_networks:
+                raise Exception("No Wi-Fi credentials in config.json")
+                
+            print("📡 Connecting to Wi-Fi...")
+            if not network_manager.connect():
+                raise Exception("Failed to connect to Wi-Fi")
+                
+            import ota
+            client_info = cfg.get("client", {})
+            ota_cfg = cfg.get("ota", {})
+            
+            args_dict = {}
+            if isinstance(args, dict):
+                args_dict = args
+            elif isinstance(args, str):
+                try:
+                    import ujson
+                    args_dict = ujson.loads(args)
+                except:
+                    pass
+                    
+            ota_url = args_dict.get("url") or ota_cfg.get("base_url") or "http://10.10.10.211:8000/fw"
+            manifest_name = args_dict.get("manifest_name") or ota_cfg.get("manifest") or "manifest.json"
+            
+            client_type = client_info.get("type", "valve").lower()
+            hw_ver = client_info.get("hardware_version", "esp32_1.0")
+            fw_ver = args_dict.get("version") or client_info.get("firmware_version", "valve_v1.0.0")
+            
+            base_url = f"{ota_url.rstrip('/')}/{client_type}/{hw_ver}/{fw_ver}"
+            
+            print(f"📡 Downloading manifest from: {base_url}/{manifest_name}")
+            manifest = ota.fetch_manifest(base_url, manifest_name)
+            
+            print("💾 Staging files...")
+            if ota.ota_update(base_url, manifest=manifest):
+                print("🎉 OTA Successful! Rebooting...")
+                config.update_config({"client": {"firmware_version": fw_ver}})
+                time.sleep(1)
+                import machine
+                machine.reset()
+        except Exception as ota_err:
+            print("❌ OTA failed:", ota_err)
+            import machine
+            machine.reset()
+
 def main():
     global last_telemetry_time
     print(" Valve Controller Starting...")

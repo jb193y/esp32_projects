@@ -37,5 +37,9 @@
         "status_led": 39
       }
     }
-  ]
+  ],
+  "ota": {
+    "base_url": "http://10.10.10.211:8000/fw",
+    "manifest": "manifest.json"
+  }
 }

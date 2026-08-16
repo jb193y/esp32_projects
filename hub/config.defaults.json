@@ -24,5 +24,9 @@
     "irrigation_deficit_threshold": 10.0,
     "well_recharge_delay_sec": 1800,
     "load_shedding_stabilization_delay_sec": 300
+  },
+  "ota": {
+    "base_url": "http://10.10.10.211:8000/fw",
+    "manifest": "manifest.json"
   }
 }

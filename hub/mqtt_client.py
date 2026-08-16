@@ -242,6 +242,33 @@ def on_message(topic, msg):
             elif command in ("START_DISCOVERY", "START_MESH_DISCOVERY"):
                 if _cmd_dispatcher:
                     _cmd_dispatcher(target_device, command, routing_path, args)
+            elif command == "OTA":
+                print("🚀 OTA command received! Initiating firmware update...")
+                try:
+                    import ota
+                    client_info = cfg.get("client", {})
+                    ota_cfg = cfg.get("ota", {})
+                    ota_url = args.get("url") or ota_cfg.get("base_url") or "http://10.10.10.211:8000/fw"
+                    manifest_name = args.get("manifest_name") or ota_cfg.get("manifest") or "manifest.json"
+                    
+                    client_type = client_info.get("type", "hub").lower()
+                    hw_ver = client_info.get("hardware_version", "esp32_1.0")
+                    fw_ver = args.get("version") or client_info.get("firmware_version", "hub_v1.0.0")
+                    
+                    base_url = f"{ota_url.rstrip('/')}/{client_type}/{hw_ver}/{fw_ver}"
+                    
+                    print(f"📡 Downloading OTA manifest from: {base_url}/{manifest_name}")
+                    manifest = ota.fetch_manifest(base_url, manifest_name)
+                    
+                    print("💾 Staging files...")
+                    if ota.ota_update(base_url, manifest=manifest):
+                        print("🎉 OTA Successful! Rebooting...")
+                        config.update_config({"client": {"firmware_version": fw_ver}})
+                        time.sleep(1)
+                        import machine
+                        machine.reset()
+                except Exception as ota_err:
+                    print("❌ OTA failed:", ota_err)
             return
 
         if _cmd_dispatcher:

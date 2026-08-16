@@ -5,6 +5,7 @@ import hashlib
 import shutil
 import subprocess
 import sys
+import time
 
 def sha256_file(path):
     """Calculate the SHA256 hash of a file."""
@@ -22,26 +23,54 @@ def sha256_file(path):
         return ""
 
 def main():
-    utils_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(utils_dir)
-    
-    # 1. Load config to get type, hardware_version, firmware_version
-    config_path = os.path.join(project_root, "config.defaults.json")
-    if not os.path.exists(config_path):
-        print(f"Error: {config_path} not found")
+    if len(sys.argv) < 2:
+        print("❌ Error: Missing component name.")
+        print("Usage: python utils/deploy_ota.py [hub | valve_controller] [optional_version]")
         sys.exit(1)
         
-    with open(config_path, "r") as f:
-        cfg = json.load(f)
+    component = sys.argv[1].lower()
+    if component not in ("hub", "valve_controller"):
+        print(f"❌ Error: Invalid component '{component}'. Must be 'hub' or 'valve_controller'.")
+        sys.exit(1)
+
+    utils_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(utils_dir)
+    component_dir = os.path.join(project_root, component)
+    
+    if not os.path.exists(component_dir):
+        print(f"❌ Error: Component directory {component_dir} not found")
+        sys.exit(1)
         
+    # 1. Load configuration
+    config_defaults_path = os.path.join(component_dir, "config.defaults.json")
+    config_live_path = os.path.join(component_dir, "config.json")
+    
+    cfg = {}
+    if os.path.exists(config_defaults_path):
+        with open(config_defaults_path, "r") as f:
+            cfg.update(json.load(f))
+    if os.path.exists(config_live_path):
+        try:
+            with open(config_live_path, "r") as f:
+                cfg.update(json.load(f))
+        except Exception as e:
+            print(f"Warning: Failed to load config.json: {e}")
+            
     client_cfg = cfg.get("client", {})
-    device_type = client_cfg.get("type", "pump")
+    device_type = client_cfg.get("type", "hub" if component == "hub" else "valve")
     hw_ver = client_cfg.get("hardware_version", "esp32_1.0")
-    fw_ver = client_cfg.get("firmware_version", "firmesp32_v2")
     
-    print(f"📦 Packaging OTA Release for type '{device_type}', HW version '{hw_ver}', FW version '{fw_ver}'...")
+    if len(sys.argv) >= 3:
+        fw_ver = sys.argv[2]
+    else:
+        fw_ver = client_cfg.get("firmware_version", "v1.0.0")
+        
+    print(f"📦 Packaging OTA Release for '{component}'...")
+    print(f" - Device Type: {device_type}")
+    print(f" - HW Version:  {hw_ver}")
+    print(f" - FW Version:  {fw_ver}")
     
-    # 2. Create local staging directory
+    # 2. Setup Staging Directory
     staging_dir = os.path.join(project_root, ".ota_staging")
     if os.path.exists(staging_dir):
         try:
@@ -51,100 +80,122 @@ def main():
             
     os.makedirs(staging_dir, exist_ok=True)
     
-    # 3. Compile list of files to package
-    files_to_copy = []
+    # Target folders inside staging mapping to remote folders
+    comp_staging_dir = os.path.join(staging_dir, component)
+    lib_staging_dir = os.path.join(staging_dir, "lib")
+    os.makedirs(comp_staging_dir, exist_ok=True)
+    os.makedirs(lib_staging_dir, exist_ok=True)
     
-    # Config files (config.defaults.json, config.json)
-    for f in glob.glob(os.path.join(project_root, "config*.json")):
-        files_to_copy.append((f, os.path.basename(f)))
-        
-    # Root python files (excluding utility/helper files)
-    for f in glob.glob(os.path.join(project_root, "*.py")):
-        basename = os.path.basename(f)
-        if basename not in ("flash_esp32.py", "verify_device.py", "pack_code.py", "unpack_code.py", "deploy_ota.py"):
-            files_to_copy.append((f, basename))
-            
-    # Lib python files
-    for f in glob.glob(os.path.join(project_root, "lib", "*.py")):
-        files_to_copy.append((f, f"lib/{os.path.basename(f)}"))
-        
-    # Copy files and calculate hashes for manifest
     manifest_files = []
     manifest_hashes = {}
+    manifest_server_paths = {}
     
-    for src, rel_dest in files_to_copy:
-        dest_path = os.path.join(staging_dir, rel_dest)
-        # Create parent directories (like lib/) in staging if they don't exist
-        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-        shutil.copy2(src, dest_path)
-        
-        # Calculate hash on the copied file
+    # Pack Component Config and Python files (which will sit in root of device)
+    comp_files = glob.glob(os.path.join(component_dir, "config*.json")) + glob.glob(os.path.join(component_dir, "*.py"))
+    for f in comp_files:
+        basename = os.path.basename(f)
+        dest_path = os.path.join(comp_staging_dir, basename)
+        shutil.copy2(f, dest_path)
         h = sha256_file(dest_path)
         if h:
-            manifest_files.append(rel_dest)
-            manifest_hashes[rel_dest] = h
-            print(f" - Staged: {rel_dest} (SHA256: {h[:8]}...)")
-        
-    # 4. Generate manifest.json inside the staging folder
+            manifest_files.append(basename)
+            manifest_hashes[basename] = h
+            manifest_server_paths[basename] = f"{component}/{basename}"
+            print(f" - Staged Component File: {basename} -> {component}/{basename} (SHA256: {h[:8]}...)")
+            
+    # Pack Shared Lib files (which sit in lib/ directory of device)
+    lib_files = glob.glob(os.path.join(project_root, "lib", "*.py"))
+    for f in lib_files:
+        basename = os.path.basename(f)
+        rel_device_path = f"lib/{basename}"
+        dest_path = os.path.join(lib_staging_dir, basename)
+        shutil.copy2(f, dest_path)
+        h = sha256_file(dest_path)
+        if h:
+            manifest_files.append(rel_device_path)
+            manifest_hashes[rel_device_path] = h
+            manifest_server_paths[rel_device_path] = f"lib/{basename}"
+            print(f" - Staged Shared Lib File: {rel_device_path} -> lib/{basename} (SHA256: {h[:8]}...)")
+            
+    # 3. Generate manifest name
+    manifest_name = f"manifest_{component}.json"
+    manifest_path = os.path.join(staging_dir, manifest_name)
+    
     manifest = {
         "files": manifest_files,
-        "sha256": manifest_hashes
+        "sha256": manifest_hashes,
+        "server_paths": manifest_server_paths
     }
     
-    manifest_path = os.path.join(staging_dir, "manifest.json")
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
-    print(" - Generated manifest.json")
+    print(f" - Generated {manifest_name}")
     
-    # 5. Connect and upload to OTA server
-    # Load MQTT/OTA config to get the ota details
+    # 4. Connect and upload to OTA server
     ota_cfg = cfg.get("ota", {})
-    # Default server config matching task.json
     ssh_user_host = ota_cfg.get("ssh_target", "sysadmin@10.10.10.211")
     remote_root = ota_cfg.get("remote_path", "/srv/ota/fw")
+    ota_url = ota_cfg.get("base_url", "http://10.10.10.211:8000/fw")
     
-    # Structured target folder: /srv/ota/fw/pump/esp32_1.0/firmesp32_v2
-    remote_dest_dir = f"{remote_root}/{device_type}/{hw_ver}/{fw_ver}"
-    
-    print(f"\n📡 Connecting to server {ssh_user_host} to create path {remote_dest_dir}...")
+    print(f"\n📡 Connecting to server {ssh_user_host} to create path {remote_root}...")
     try:
         subprocess.run(
-            ["ssh", ssh_user_host, f"mkdir -p {remote_dest_dir}"],
+            ["ssh", ssh_user_host, f"mkdir -p {remote_root}"],
             check=True
         )
     except Exception as e:
-        print(f"❌ Error: Failed to create remote directory via SSH. Ensure SSH access is working. Details: {e}")
+        print(f"❌ Error: Failed to create remote directory via SSH. Details: {e}")
         sys.exit(1)
         
-    print("📤 Uploading firmware files recursively...")
+    print("📤 Uploading firmware files recursively to remote root...")
     try:
-        # Use scp -r with staging_dir contents
-        # On Windows, using "." ensures we copy the folder contents without copying the folder name itself
+        # Upload staged folder contents to remote root
+        # Staging folder has: hub/ (or valve_controller/), lib/, manifest_{component}.json
         subprocess.run(
-            ["scp", "-r", os.path.join(staging_dir, "."), f"{ssh_user_host}:{remote_dest_dir}/"],
+            ["scp", "-r", os.path.join(staging_dir, "."), f"{ssh_user_host}:{remote_root}/"],
             check=True
         )
-        print(f"\n🎉 Success: Firmware release version '{fw_ver}' successfully deployed to OTA server!")
-        print(f"Remote Destination: {remote_dest_dir}/")
+        print(f"\n🎉 Success: Firmware release successfully deployed to OTA server!")
+        print(f"Remote Path: {remote_root}/")
         
-        # 6. Publish MQTT Trigger Command
+        # 5. Publish MQTT Trigger Command in Standard JSON Envelope
         mqtt_cfg = cfg.get("mqtt", {})
         mqtt_server = ota_cfg.get("mqtt_server") or mqtt_cfg.get("server", "10.10.10.211")
         mqtt_port = int(ota_cfg.get("mqtt_port") or mqtt_cfg.get("port", 1883))
         
-        broadcast_topic = f"{device_type}/{hw_ver}/command"
-        update_payload = json.dumps({
-            "command": "OTA",
-            "version": fw_ver,
-            "manifest": True
+        site = client_cfg.get("site", "loc001")
+        group = client_cfg.get("group", "all")
+        target_device_id = client_cfg.get("id", "all")
+        
+        # Topic structure: site/group/device_type/device_id/command
+        command_topic = f"{site}/{group}/{device_type}/{target_device_id}/command"
+        
+        envelope_payload = json.dumps({
+            "source": "backend_api",
+            "target": target_device_id,
+            "msg_type": "COMMAND",
+            "timestamp": int(time.time()),
+            "route": {
+                "transport": "MQTT",
+                "route_id": "ota_deploy",
+                "current_hop_index": 0,
+                "hops": ["backend_api"],
+                "link_diagnostics": []
+            },
+            "data": {
+                "cmd": "OTA",
+                "version": fw_ver,
+                "url": ota_url,
+                "manifest_name": manifest_name
+            }
         })
         
-        print(f"\n📢 Publishing OTA trigger to MQTT broker ({mqtt_server}:{mqtt_port}) on topic '{broadcast_topic}'...")
+        print(f"\n📢 Publishing OTA trigger to MQTT broker ({mqtt_server}:{mqtt_port}) on topic '{command_topic}'...")
         try:
             import paho.mqtt.publish as publish
             publish.single(
-                topic=broadcast_topic,
-                payload=update_payload,
+                topic=command_topic,
+                payload=envelope_payload,
                 hostname=mqtt_server,
                 port=mqtt_port,
                 retain=False
