@@ -87,30 +87,25 @@ def save_node(mac_str, node_type, node_id=None, name=None):
     return nodes[mac_str]
 
 def add_peer_safe(e, peer_bytes, channel=0):
-    """Add ESP-NOW peer, removing oldest if peer table is full."""
+    """Add ESP-NOW peer, registering on both STA_IF and AP_IF to support concurrent reception."""
     peer_bytes = bytes(peer_bytes)
+    import network
+
+    # Register on STA interface
     try:
         e.del_peer(peer_bytes)
     except:
         pass
     try:
-        e.add_peer(peer_bytes, channel)
-    except Exception as err:
-        try:
-            peers_list = e.peers() if callable(getattr(e, 'peers', None)) else (e.peers if hasattr(e, 'peers') else [])
-            if not peers_list and hasattr(e, 'get_peers'):
-                peers_list = e.get_peers()
-        except:
-            peers_list = []
-        if peers_list:
-            try:
-                e.del_peer(peers_list[0][0])
-                e.add_peer(peer_bytes, channel)
-            except Exception:
-                try:
-                    e.add_peer(peer_bytes)
-                except Exception:
-                    pass
+        e.add_peer(peer_bytes, b'', channel, network.STA_IF)
+    except:
+        pass
+
+    # Register on AP interface
+    try:
+        e.add_peer(peer_bytes, b'', channel, network.AP_IF)
+    except:
+        pass
 
 def parse_packet(payload_str):
     p = ujson.loads(payload_str)
@@ -168,15 +163,16 @@ def send_espnow_msg(target_mac_str, msg_dict, routing_path=None, target_id=None)
         "pld": data_payload
     }
 
-    next_hop_mac_str = routing_path[0]
-    next_hop_bytes = mac_to_bytes(next_hop_mac_str)
+    # The physical transmission MAC is ALWAYS broadcast to ensure 100% reliability
+    phys_mac = "ff:ff:ff:ff:ff:ff"
+    next_hop_bytes = mac_to_bytes(phys_mac)
 
     try:
         add_peer_safe(_e, next_hop_bytes)
         payload_str = ujson.dumps(envelope)
         try:
             _e.send(next_hop_bytes, payload_str.encode('utf-8'))
-            print(" ESP-NOW message sent to next hop", next_hop_mac_str)
+            print(" ESP-NOW broadcasted message to", phys_mac)
             return True
         except Exception as send_err:
             print(" ESP-NOW send notice:", send_err)
@@ -344,21 +340,37 @@ def espnow_receiver_thread(heartbeats=None):
     global _e
     print(" ESP-NOW Master Receiver Thread Started")
 
-    # Deactivate AP interface to force ESP-NOW to bind to STA interface
+    # Activate AP interface to support reliable ESP-NOW reception
+    sta = network.WLAN(network.STA_IF)
+    
+    # Temporarily deactivate STA interface to force ESP-NOW to bind to AP interface
     try:
-        ap = network.WLAN(network.AP_IF)
-        ap.active(False)
+        sta.active(False)
     except:
         pass
 
-    sta = network.WLAN(network.STA_IF)
+    try:
+        ap = network.WLAN(network.AP_IF)
+        ap.active(True)
+        try:
+            ap.config(essid="AgriPulse_Hub_Mesh", authmode=network.AUTH_OPEN)
+        except:
+            pass
+    except:
+        pass
 
     _e = espnow.ESPNow()
     _e.active(True)
     try:
-        _e.config(rxbuf=1024)
+        _e.config(rxbuf=4096)
     except Exception as ex:
         print("rxbuf config notice:", ex)
+
+    # Reactivate STA interface so WAN connection can proceed
+    try:
+        sta.active(True)
+    except:
+        pass
 
     # Explicitly register broadcast peer so MicroPython delivers full broadcast packets
     add_peer_safe(_e, b'\xff\xff\xff\xff\xff\xff')
@@ -367,6 +379,7 @@ def espnow_receiver_thread(heartbeats=None):
     was_discovery_active = False
 
     while True:
+
         if heartbeats is not None:
             heartbeats["esp_now"] = config.get_unix_time()
 
@@ -386,7 +399,8 @@ def espnow_receiver_thread(heartbeats=None):
                     active_ch = sta.config('channel')
                 except Exception:
                     active_ch = 4
-                hub_mac_str = bytes_to_mac(sta.config('mac'))
+                ap = network.WLAN(network.AP_IF)
+                hub_mac_str = bytes_to_mac(ap.config('mac'))
                 beacon_pkt = {
                     "src": "hub_master_01",
                     "dst": "broadcast",
@@ -475,11 +489,14 @@ def espnow_receiver_thread(heartbeats=None):
 
             cfg = config.load_config()
             client_id = cfg.get("client", {}).get("id", "hub_master_01")
-            hub_mac_str = bytes_to_mac(sta.config('mac'))
+            hub_sta_mac = bytes_to_mac(sta.config('mac'))
+            
+            ap = network.WLAN(network.AP_IF)
+            hub_ap_mac = bytes_to_mac(ap.config('mac'))
 
             # Accept packets targeted at us, broadcast, or if target matches our hub ID
             is_broadcast = target in ("00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff", "FF:FF:FF:FF:FF:FF", "broadcast")
-            is_for_us = is_broadcast or (target and target.lower() == client_id.lower()) or (target and target.upper() == hub_mac_str.upper())
+            is_for_us = is_broadcast or (target and target.lower() in (client_id.lower(), "hub_master_01")) or (target and target.upper() in (hub_sta_mac.upper(), hub_ap_mac.upper()))
             
             if not is_for_us:
                 print(f"Packet target {target} != hub {client_id}, ignoring.")
@@ -502,7 +519,7 @@ def espnow_receiver_thread(heartbeats=None):
                 # ACK back to the node
                 send_espnow_msg(sender_mac_str, {
                     "msg_type": "ACK",
-                    "payload": {"status": "paired", "hub_mac": hub_mac_str, "channel": active_ch}
+                    "payload": {"status": "paired", "hub_mac": hub_ap_mac, "channel": active_ch}
                 }, target_id=node_id)
 
                 # Publish retained status so the mobile app "waiting" screen resolves

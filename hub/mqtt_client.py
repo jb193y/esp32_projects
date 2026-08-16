@@ -1,4 +1,25 @@
 # mqtt_client.py (Hub)
+import sys
+import usocket
+
+# Enforce a 3.0-second socket timeout on all connection sockets to prevent
+# blocking MQTT connects from starving CPU cores and disrupting ESP-NOW.
+class TimeoutSocket(usocket.socket):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.settimeout(3.0)
+
+class UsocketWrapper:
+    def __init__(self, orig):
+        self._orig = orig
+    def __getattr__(self, name):
+        if name == 'socket':
+            return TimeoutSocket
+        return getattr(self._orig, name)
+
+sys.modules['usocket'] = UsocketWrapper(usocket)
+sys.modules['socket'] = sys.modules['usocket']
+
 from umqtt.simple import MQTTClient
 import ujson
 import time
@@ -306,20 +327,7 @@ def mqtt_thread(heartbeats=None):
                     print("Failed to set Last Will:", lwt_err)
 
                 _client.set_callback(on_message)
-                
-                # Temporarily patch socket.socket to enforce a 3-second connection timeout
-                import socket
-                _orig_socket = socket.socket
-                def patched_socket(*args, **kwargs):
-                    s = _orig_socket(*args, **kwargs)
-                    s.settimeout(3.0)
-                    return s
-                socket.socket = patched_socket
-                
-                try:
-                    _client.connect()
-                finally:
-                    socket.socket = _orig_socket
+                _client.connect()
                 _is_connected = True
                 led_status.set_status("MQTT_CONNECTED")
                 print(" MQTT Connected!")

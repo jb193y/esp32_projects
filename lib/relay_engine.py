@@ -20,29 +20,25 @@ def init_relay_engine(espnow_instance):
     _e = espnow_instance
 
 def add_peer_safe(e, peer_bytes, channel=0):
+    """Add ESP-NOW peer, registering on both STA_IF and AP_IF to support concurrent reception."""
     peer_bytes = bytes(peer_bytes)
+    import network
+
+    # Register on STA interface
     try:
         e.del_peer(peer_bytes)
     except:
         pass
     try:
-        e.add_peer(peer_bytes, channel)
-    except Exception as err:
-        try:
-            peers_list = e.peers() if callable(getattr(e, 'peers', None)) else (e.peers if hasattr(e, 'peers') else [])
-            if not peers_list and hasattr(e, 'get_peers'):
-                peers_list = e.get_peers()
-        except:
-            peers_list = []
-        if peers_list:
-            try:
-                e.del_peer(peers_list[0][0])
-                e.add_peer(peer_bytes, channel)
-            except Exception:
-                try:
-                    e.add_peer(peer_bytes)
-                except Exception:
-                    pass
+        e.add_peer(peer_bytes, b'', channel, network.STA_IF)
+    except:
+        pass
+
+    # Register on AP interface
+    try:
+        e.add_peer(peer_bytes, b'', channel, network.AP_IF)
+    except:
+        pass
 
 def parse_packet(payload_str):
     p = ujson.loads(payload_str)

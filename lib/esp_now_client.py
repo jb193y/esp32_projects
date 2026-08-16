@@ -43,29 +43,25 @@ def set_paired(val):
     _paired = val
 
 def add_peer_safe(e, peer_bytes, channel=0):
+    """Add ESP-NOW peer, registering on both STA_IF and AP_IF to support concurrent reception."""
     peer_bytes = bytes(peer_bytes)
+    import network
+
+    # Register on STA interface
     try:
         e.del_peer(peer_bytes)
     except:
         pass
     try:
-        e.add_peer(peer_bytes, channel)
-    except Exception as err:
-        try:
-            peers_list = e.peers() if callable(getattr(e, 'peers', None)) else (e.peers if hasattr(e, 'peers') else [])
-            if not peers_list and hasattr(e, 'get_peers'):
-                peers_list = e.get_peers()
-        except:
-            peers_list = []
-        if peers_list:
-            try:
-                e.del_peer(peers_list[0][0])
-                e.add_peer(peer_bytes, channel)
-            except Exception:
-                try:
-                    e.add_peer(peer_bytes)
-                except Exception:
-                    pass
+        e.add_peer(peer_bytes, b'', channel, network.STA_IF)
+    except:
+        pass
+
+    # Register on AP interface
+    try:
+        e.add_peer(peer_bytes, b'', channel, network.AP_IF)
+    except:
+        pass
 
 def parse_packet(payload_str):
     p = ujson.loads(payload_str)
@@ -152,19 +148,20 @@ def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
         "pld": payload
     }
 
-    next_hop = hops[0]
-    next_hop_bytes = mac_to_bytes(next_hop)
+    # The physical transmission MAC is ALWAYS broadcast to ensure 100% reliability
+    phys_mac = "ff:ff:ff:ff:ff:ff"
+    next_hop_bytes = mac_to_bytes(phys_mac)
 
     try:
         add_peer_safe(_e, next_hop_bytes)
         payload_str = ujson.dumps(envelope)
         try:
             res = _e.send(next_hop_bytes, payload_str.encode('utf-8'))
-            print(f" Envelope sent to next hop {next_hop} for destination {target_id} (res={res})")
+            print(f" Envelope sent to next hop {phys_mac} for destination {target_id} (res={res})")
             print(payload_str.encode('utf-8'))
             return res
         except Exception as send_err:
-            print(f" ESP-NOW send notice to {next_hop}: {send_err}")
+            print(f" ESP-NOW send notice to {phys_mac}: {send_err}")
             return False
     except Exception as err:
         print(f" Failed to transmit packet to destination {target_id}:", err)
@@ -231,6 +228,10 @@ def init_espnow_client(on_cmd_received_fn=None):
     
     _e = espnow.ESPNow()
     _e.active(True)
+    try:
+        _e.config(rxbuf=4096)
+    except:
+        pass
     
     relay_engine.init_relay_engine(_e)
     
