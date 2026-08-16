@@ -35,6 +35,23 @@ def mac_to_bytes(mac_str):
 def bytes_to_mac(mac_bytes):
     return ':'.join('%02x' % b for b in mac_bytes)
 
+def get_hub_id():
+    cfg = config.load_config()
+    hub_cfg = cfg.get("hub", {})
+    if isinstance(hub_cfg, dict):
+        for key in ("id", "node_id", "client_id"):
+            hub_id = hub_cfg.get(key)
+            if hub_id:
+                return str(hub_id)
+
+    client_cfg = cfg.get("client", {})
+    if isinstance(client_cfg, dict):
+        client_id = client_cfg.get("id")
+        if client_id and str(client_id).lower() != "unknown_node":
+            return str(client_id)
+
+    return "hub_master_01"
+
 def is_paired():
     return _paired
 
@@ -130,7 +147,7 @@ def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
 
     # If it is status pairing request or target_mac is broadcast, target is broadcast
     is_broadcast = (target_mac == "ff:ff:ff:ff:ff:ff" or msg_type == "PAIR_REQ" or (msg_type == "STATUS" and payload.get("status") == "pairing_request"))
-    target_id = "broadcast" if is_broadcast else "hub_master_01"
+    target_id = "broadcast" if is_broadcast else get_hub_id()
 
     # Get pre-provisioned route or dynamic fallback
     route_id, hops = get_route_for_target(target_id, target_mac)

@@ -26,20 +26,20 @@ def watchdog_thread():
     while True:
         time.sleep(10)
         now = time.time()
-        
+
         # Detect if system clock jumped (e.g. via NTP sync)
         time_diff = now - last_checked_system_time
         if abs(time_diff) > 100:
             print(f"Watchdog: System clock jump detected (diff={time_diff}s). Adjusting heartbeats.")
             for name in heartbeats:
                 heartbeats[name] = now
-                
+
         last_checked_system_time = now
-        
+
         for name, last_time in heartbeats.items():
             age = now - last_time
-            if age > 60:
-                print(f"Watchdog: Thread '{name}' hung ({age}s ago)! Rebooting...")
+            if age > 90:
+                print(f"Watchdog: Thread '{name}' stalled ({age}s ago). Rebooting...")
                 time.sleep(1)
                 machine.reset()
 

@@ -29,24 +29,33 @@ def load_defaults():
         return {}
     return _read_json(DEFAULT_FILE)
 
-def load_config():
+def load_config(force_reload=False):
     global _cached_config
-    if _cached_config is not None:
-        return _cached_config
 
     defaults = load_defaults()
     cfg = {}
+
     try:
-        cfg = _read_json(CONFIG_FILE)
+        if force_reload or _cached_config is None:
+            try:
+                cfg = _read_json(CONFIG_FILE)
+            except Exception:
+                cfg = {}
+
+            if not isinstance(cfg, dict):
+                cfg = {}
+
+            cfg = _deep_merge(cfg, defaults)
+            _cached_config = cfg
+            return cfg
+
+        if CONFIG_FILE in os.listdir():
+            latest_cfg = _read_json(CONFIG_FILE)
+            if isinstance(latest_cfg, dict):
+                _cached_config = _deep_merge(latest_cfg, defaults)
+        return _cached_config
     except Exception:
-        cfg = {}
-
-    if not isinstance(cfg, dict):
-        cfg = {}
-
-    cfg = _deep_merge(cfg, defaults)
-    _cached_config = cfg
-    return cfg
+        return _cached_config or _deep_merge({}, defaults)
 
 def save_config(cfg):
     global _cached_config

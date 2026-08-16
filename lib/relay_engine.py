@@ -76,19 +76,28 @@ def process_and_relay(packet):
     if _e is None:
         print(" Relay engine not initialized with ESPNow")
         return False
-        
+
     msg_type = packet.get("msg_type")
     target = packet.get("target")
+    route = packet.get("route") or packet.get("rt") or {}
     hops = packet.get("hops", [])
-    current_hop_index = packet.get("current_hop_index", 0)
-    
+    if not hops and isinstance(route, dict):
+        hops = route.get("hops", [])
+    if not isinstance(hops, list):
+        hops = []
+
+    try:
+        current_hop_index = int(packet.get("current_hop_index", route.get("current_hop_index", 0)))
+    except Exception:
+        current_hop_index = 0
+
     sta = network.WLAN(network.STA_IF)
     local_mac = bytes_to_mac(sta.config('mac'))
-    
+
     cfg = config.load_config()
     client_cfg = cfg.get("client", {})
     local_id = client_cfg.get("id", "").lower()
-    
+
     # 1. Check if packet target is us (case-insensitive) or broadcast
     if target:
         t_lower = target.lower()
@@ -101,34 +110,38 @@ def process_and_relay(packet):
     # 2. Check if we should relay it based on current_hop_index and hops
     if not hops:
         return False
-        
+
+    if current_hop_index < 0:
+        current_hop_index = 0
     if current_hop_index >= len(hops):
         print(" current_hop_index out of hops bounds")
         return False
-        
+
     current_hop_mac = hops[current_hop_index]
-    
+
     # If the current hop MAC matches us, we need to relay to next hop
-    if current_hop_mac.upper() == local_mac.upper():
+    if current_hop_mac and current_hop_mac.upper() == local_mac.upper():
         next_hop_index = current_hop_index + 1
         if next_hop_index >= len(hops):
-            # No next hop, but target is not us!
             print(" Routing error: no next hop and we are not the target.")
             return False
-            
+
         next_hop_mac = hops[next_hop_index]
         next_hop_bytes = mac_to_bytes(next_hop_mac)
-        
+
         # Update the packet in-place with new current_hop_index in raw dict
         if "raw" in packet and isinstance(packet["raw"], dict):
             raw_packet = packet["raw"]
-            if "route" in raw_packet and isinstance(raw_packet["route"], dict):
-                raw_packet["route"]["current_hop_index"] = next_hop_index
+            route_obj = raw_packet.get("route") or raw_packet.get("rt")
+            if isinstance(route_obj, dict):
+                route_obj["current_hop_index"] = next_hop_index
+                route_obj["hops"] = hops
             else:
                 raw_packet["current_hop_index"] = next_hop_index
-                if "hop" in raw_packet:
-                    raw_packet["hop"] = next_hop_index
-        
+                raw_packet["route"] = {"current_hop_index": next_hop_index, "hops": hops}
+                if "rt" in raw_packet:
+                    raw_packet["rt"] = raw_packet["route"]
+
         print(f" Relaying packet to next hop: {next_hop_mac}")
         try:
             add_peer_safe(_e, next_hop_bytes)
@@ -137,7 +150,7 @@ def process_and_relay(packet):
             print(" Packet relayed successfully.")
         except Exception as e:
             print(f" Failed to relay packet to next hop: {e}")
-            
+
         return False
-        
+
     return False
