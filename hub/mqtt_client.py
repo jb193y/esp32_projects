@@ -28,8 +28,33 @@ import config
 import led_status
 import network_manager
 
+class ReentrantLock:
+    def __init__(self):
+        self._lock = _thread.allocate_lock()
+        self._owner = None
+        self._count = 0
+
+    def acquire(self):
+        tid = _thread.get_ident()
+        if self._owner == tid:
+            self._count += 1
+            return True
+        self._lock.acquire()
+        self._owner = tid
+        self._count = 1
+        return True
+
+    def release(self):
+        tid = _thread.get_ident()
+        if self._owner != tid:
+            raise RuntimeError("Cannot release lock owned by another thread")
+        self._count -= 1
+        if self._count == 0:
+            self._owner = None
+            self._lock.release()
+
 _client = None
-_lock = _thread.allocate_lock()
+_lock = ReentrantLock()
 _is_connected = False
 _provision_confirmed = False
 _timer_started = False
@@ -100,10 +125,23 @@ def publish_hub_telemetry(status_val):
         tele_topic = f"{site}/{group}/{client_type}/{client_id}/telemetry"
 
         payload = {
+            "source": client_id,
+            "target": "backend_api",
+            "msg_type": "TELEMETRY",
             "timestamp": config.get_unix_time(),
-            "hub_status": status_val,
-            "device_status": status_val,
-            "mode": "AUTO"
+            "route": {
+                "transport": "MQTT",
+                "route_id": "direct",
+                "current_hop_index": 0,
+                "hops": [client_id],
+                "link_diagnostics": []
+            },
+            "data": {
+                "device_id": client_id,
+                "hub_status": status_val,
+                "device_status": status_val,
+                "mode": "AUTO"
+            }
         }
         publish_msg(tele_topic, payload)
         print(f"Published Hub telemetry: {status_val} to {tele_topic}")
@@ -153,45 +191,8 @@ def on_message(topic, msg):
             if isinstance(command, dict):
                 command = command.get("cmd") or command.get("command")
         else:
-            # Fallback legacy parsing
-            target_device = payload.get("device_id")
-            command = None
-            args = {}
-            routing_path = []
-            
-            if "state" in payload:
-                state_data = payload.get("state", {})
-                if "pump" in state_data:
-                    if topic_str.startswith("valve/"):
-                        command = "VALVE_OPEN" if state_data["pump"] == "ON" else "VALVE_CLOSE"
-                    else:
-                        command = "PUMP_ON" if state_data["pump"] == "ON" else "PUMP_OFF"
-                elif "valve" in state_data:
-                    command = "VALVE_OPEN" if state_data["valve"] in ("OPEN", "ON") else "VALVE_CLOSE"
-                elif "hub_status" in state_data:
-                    command = "HUB_ENABLE" if state_data["hub_status"] == "Enabled" else "HUB_DISABLE"
-                elif "command" in state_data:
-                    command = state_data["command"]
-                    target_device = state_data.get("target_device_id") or state_data.get("target_node") or target_device
-                    args = {k: v for k, v in state_data.items() if k not in ("command", "target_node", "target_device_id")}
-            elif "command" in payload:
-                command = payload.get("command")
-                target_device = payload.get("target_device_id") or payload.get("target_node") or target_device
-                routing_path = payload.get("routing_path", [])
-                args = {k: v for k, v in payload.items() if k not in ("command", "target_node", "target_device_id", "routing_path")}
-                if "payload" in payload and isinstance(payload["payload"], dict):
-                    args.update(payload["payload"])
-            else:
-                target_device = payload.get("target_node", target_device)
-                command = payload.get("command")
-                routing_path = payload.get("routing_path", [])
-                args = payload.get("payload", {})
-            
-        # Fallback to extract target from topic if still missing
-        if not target_device and "/" in topic_str:
-            parts = topic_str.split("/")
-            if len(parts) >= 4 and parts[-1] == "command": # e.g. location/group/pump/device123/command
-                target_device = parts[-2]
+            print("Ignoring legacy or non-envelope MQTT payload:", payload_str)
+            return
         
         if not target_device or not command:
             print("MQTT command payload missing target_device_id or command")
@@ -314,12 +315,24 @@ def mqtt_thread(heartbeats=None):
                     keepalive=mqtt_cfg.get("keepalive", 60)
                 )
                 
-                # Configure Last Will and Testament (LWT) for abrupt disconnects
+                # Configure Last Will and Testament (LWT) for abrupt disconnects in standard envelope
                 lwt_payload = ujson.dumps({
-                    "client_id": client_id,
-                    "status": "offline",
+                    "source": client_id,
+                    "target": "backend_api",
+                    "msg_type": "STATUS",
                     "timestamp": config.get_unix_time(),
-                    "reason": "keepalive_timeout"
+                    "route": {
+                        "transport": "MQTT",
+                        "route_id": "lwt",
+                        "current_hop_index": 0,
+                        "hops": [client_id],
+                        "link_diagnostics": []
+                    },
+                    "data": {
+                        "device_id": client_id,
+                        "status": "offline",
+                        "reason": "keepalive_timeout"
+                    }
                 })
                 try:
                     _client.set_last_will(status_topic.encode('utf-8'), lwt_payload.encode('utf-8'), retain=True)
@@ -345,13 +358,25 @@ def mqtt_thread(heartbeats=None):
                     except Exception:
                         pass
                 
-                # Publish startup status
+                # Publish startup status in standard envelope
                 if site != "default_site":
                     publish_msg(status_topic, {
-                        "client_id": client_id,
-                        "status": "online",
+                        "source": client_id,
+                        "target": "backend_api",
+                        "msg_type": "STATUS",
                         "timestamp": config.get_unix_time(),
-                        "fw_ver": cfg.get("client", {}).get("firmware_version", "hub_v1.0.0")
+                        "route": {
+                            "transport": "MQTT",
+                            "route_id": "direct",
+                            "current_hop_index": 0,
+                            "hops": [client_id],
+                            "link_diagnostics": []
+                        },
+                        "data": {
+                            "device_id": client_id,
+                            "status": "online",
+                            "fw_ver": cfg.get("client", {}).get("firmware_version", "hub_v1.0.0")
+                        }
                     }, retain=True)
                 else:
                     print("ERROR: 'site' not set in config. Cannot publish hub status.")

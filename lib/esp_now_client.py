@@ -148,8 +148,8 @@ def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
         "pld": payload
     }
 
-    # The physical transmission MAC is ALWAYS broadcast to ensure 100% reliability
-    phys_mac = "ff:ff:ff:ff:ff:ff"
+    # Use unicast next-hop MAC from routing path if available, otherwise fallback to broadcast
+    phys_mac = target_mac or (hops[0] if hops else "ff:ff:ff:ff:ff:ff")
     next_hop_bytes = mac_to_bytes(phys_mac)
 
     try:

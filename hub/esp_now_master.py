@@ -163,8 +163,8 @@ def send_espnow_msg(target_mac_str, msg_dict, routing_path=None, target_id=None)
         "pld": data_payload
     }
 
-    # The physical transmission MAC is ALWAYS broadcast to ensure 100% reliability
-    phys_mac = "ff:ff:ff:ff:ff:ff"
+    # Use the resolved next-hop MAC in the routing path, falling back to broadcast
+    phys_mac = (routing_path[0] if routing_path else target_mac_str) or "ff:ff:ff:ff:ff:ff"
     next_hop_bytes = mac_to_bytes(phys_mac)
 
     try:
@@ -399,8 +399,7 @@ def espnow_receiver_thread(heartbeats=None):
                     active_ch = sta.config('channel')
                 except Exception:
                     active_ch = 4
-                ap = network.WLAN(network.AP_IF)
-                hub_mac_str = bytes_to_mac(ap.config('mac'))
+                hub_mac_str = bytes_to_mac(sta.config('mac'))
                 beacon_pkt = {
                     "src": "hub_master_01",
                     "dst": "broadcast",
@@ -524,7 +523,7 @@ def espnow_receiver_thread(heartbeats=None):
                 # ACK back to the node
                 send_espnow_msg(sender_mac_str, {
                     "msg_type": "ACK",
-                    "payload": {"status": "paired", "hub_mac": hub_ap_mac, "channel": active_ch}
+                    "payload": {"status": "paired", "hub_mac": hub_sta_mac, "channel": active_ch}
                 }, target_id=node_id)
 
                 # Publish retained status so the mobile app "waiting" screen resolves
