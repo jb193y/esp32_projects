@@ -7,6 +7,25 @@ import uhashlib
 import gc
 import time
 
+def _dirname(path):
+    if '/' not in path:
+        return ""
+    return "/".join(path.split("/")[:-1])
+
+def _makedirs(path):
+    if not path or path == ".":
+        return
+    parts = path.split("/")
+    current = ""
+    for part in parts:
+        if not part:
+            continue
+        current = current + "/" + part if current else part
+        try:
+            os.mkdir(current)
+        except:
+            pass
+
 def sha256_file(path):
     """Calculates SHA256 in chunks to save memory."""
     h = uhashlib.sha256()
@@ -29,12 +48,9 @@ def _download_stream(url, dest_tmp):
         raise Exception("HTTP %d" % r.status_code)
 
     # Ensure parent directories exist
-    parent_dir = os.path.dirname(dest_tmp)
+    parent_dir = _dirname(dest_tmp)
     if parent_dir and parent_dir != "/":
-        try:
-            os.makedirs(parent_dir)
-        except:
-            pass
+        _makedirs(parent_dir)
 
     with open(dest_tmp, "wb") as f:
         while True:
@@ -58,12 +74,9 @@ def apply_staged(fname):
     bak = fname + ".bak"
     
     # Ensure nested directories exist for final destination
-    parent_dir = os.path.dirname(fname)
+    parent_dir = _dirname(fname)
     if parent_dir and parent_dir != "/":
-        try:
-            os.makedirs(parent_dir)
-        except:
-            pass
+        _makedirs(parent_dir)
 
     try:
         if bak in os.listdir(parent_dir or "."): 
@@ -79,7 +92,7 @@ def rollback(files):
     """Restores .bak files if update fails."""
     for fname in files:
         tmp, bak = fname + ".new", fname + ".bak"
-        parent_dir = os.path.dirname(fname)
+        parent_dir = _dirname(fname)
         try:
             if tmp in os.listdir(parent_dir or "."): 
                 os.remove(tmp)
