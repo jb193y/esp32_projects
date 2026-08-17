@@ -75,30 +75,24 @@ def get_device_files_metadata(mpremote, port):
         return None
 
 def main():
+    import argparse
+
     # Resolve project root (parent of utils) and python/mpremote path
     utils_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(utils_dir)
-    python_exe = os.path.join(project_root, '.venv', 'Scripts', 'python.exe')
-    mpremote = [python_exe, '-m', 'mpremote']
+    mpremote = ['mpremote']
     
-    # Parse arguments
-    port = 'COM10'
-    project_dir = None
-    for arg in sys.argv[1:]:
-        if arg.upper().startswith('COM'):
-            port = arg
-        else:
-            project_dir = arg
-            
-    target_dir = os.path.join(project_root, project_dir) if project_dir else project_root
+    # --- Argument Parsing ---
+    parser = argparse.ArgumentParser(description="Delta-sync a project component to an ESP32 device.")
+    parser.add_argument("type", help="The project component to deploy (e.g., 'hub', 'valve_controller').")
+    parser.add_argument("port", help="The COM port of the ESP32 device (e.g., 'COM3').")
+    args = parser.parse_args()
+
+    target_dir = os.path.join(project_root, args.type)
     
-    if not os.path.exists(python_exe):
-        print(f"Error: Python not found at {python_exe}")
-        sys.exit(1)
-        
     # --- 1. Query Device Files for Sync & Cleanup ---
-    print(f"Scanning ESP32 device filesystem on {port}...")
-    device_files = get_device_files_metadata(mpremote, port)
+    print(f"Scanning ESP32 device filesystem on {args.port}...")
+    device_files = get_device_files_metadata(mpremote, args.port)
     if device_files is None:
         print("[ERROR] Device connection failed. Aborting sync.")
         sys.exit(1)
@@ -141,7 +135,7 @@ def main():
         print(f"Cleanup: Found {len(unwanted_files)} unwanted files on the ESP32. Deleting...")
         for f in unwanted_files:
             print(f" - Deleting {f}...")
-            subprocess.run([*mpremote, 'connect', port, 'fs', 'rm', f':{f}'], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+            subprocess.run([*mpremote, 'connect', args.port, 'fs', 'rm', f':{f}'], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
     else:
         print("Device filesystem clean (no unwanted files).")
  
@@ -150,8 +144,8 @@ def main():
         # Quick check if lib directory needs creation
         lib_exists = any(dev_f.startswith('lib/') for dev_f in device_files.keys())
         if not lib_exists:
-            print(f"\nCreating remote :lib directory on {port}...")
-            subprocess.run([*mpremote, 'connect', port, 'fs', 'mkdir', ':lib'], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+            print(f"\nCreating remote :lib directory on {args.port}...")
+            subprocess.run([*mpremote, 'connect', args.port, 'fs', 'mkdir', ':lib'], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
     
     # --- 4. Delta Sync Files ---
     print("\nChecking file sync status...")
@@ -183,11 +177,11 @@ def main():
             
     # Print and copy out-of-sync files
     if out_of_sync_files:
-        print(f"\nSynchronizing out-of-sync files to ESP32 on {port}...")
+        print(f"\nSynchronizing out-of-sync files to ESP32 on {args.port}...")
         for rel_path, local_abs_path in out_of_sync_files:
             print(f" - Copying: {rel_path} (out of sync)...")
             target_path = f":{rel_path}"
-            subprocess.run([*mpremote, 'connect', port, 'fs', 'cp', local_abs_path, target_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run([*mpremote, 'connect', args.port, 'fs', 'cp', local_abs_path, target_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
  
     print(f"\nESP32 sync complete! Synced: {len(out_of_sync_files)} files, Skipped: {len(up_to_date_files)} files.")
 

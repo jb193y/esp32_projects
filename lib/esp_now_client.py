@@ -354,7 +354,7 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
             else:
                 if not _paired:
                     send_pairing_request()
-                    time.sleep(5)
+                    time.sleep(2) # Reduce sleep to re-attempt pairing faster
                 else:
                     time.sleep_ms(50)
                     

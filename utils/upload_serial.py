@@ -38,11 +38,11 @@ def upload_file(ser, local_path, remote_path):
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: python upload_serial.py <COM_PORT> <PROJECT_DIR>")
+        print("Usage: python upload_serial.py <PROJECT_DIR> <COM_PORT>")
         sys.exit(1)
         
-    port = sys.argv[1]
-    project_dir = sys.argv[2]
+    project_dir = sys.argv[1]
+    port = sys.argv[2]
     
     utils_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(utils_dir)
@@ -53,15 +53,31 @@ def main():
         sys.exit(1)
         
     print(f"Connecting to {port} at 115200...")
-    ser = serial.Serial(port, 115200, timeout=3)
+    # Open the serial port first. The rts/dtr arguments are not supported
+    # in the constructor for all pyserial versions.
+    ser = serial.Serial(port, 115200, timeout=2)
+    
+    # --- Force a hardware reset using DTR/RTS lines ---
+    # This is a robust way to interrupt a device stuck in a boot loop.
+    print("Forcing hardware reset...")
+    # Set initial DTR/RTS state before toggling for reset.
+    ser.rts = False
+    ser.dtr = False
+    ser.setRTS(False)
+    ser.setDTR(False)  # IO0=HIGH
+    time.sleep(0.1)
+    ser.setRTS(True)  # RST=LOW -> Reset
+    time.sleep(0.2)
+    ser.setRTS(False) # RST=HIGH -> Normal boot
+    time.sleep(0.2)
+    ser.reset_input_buffer() # Clear any boot-up garbage after reset
+    time.sleep(0.1)
     
     # Enters raw REPL mode:
-    # 1. Send Ctrl-C (0x03) multiple times to interrupt any running script
+    # 1. Send Ctrl-C (0x03) to interrupt any script that auto-started after reset
     print("Sending interrupts to stop running threads...")
-    for _ in range(7):
-        ser.write(b'\x03')
-        time.sleep(0.15)
-    time.sleep(0.5)
+    ser.write(b'\x03\x03') # Send a couple of interrupts
+    
     ser.reset_input_buffer()
     
     # 2. Send Ctrl-A (0x01) to enter raw REPL

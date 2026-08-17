@@ -1,6 +1,6 @@
 {
   "client": {
-    "id": "hub_master_01",
+    "id": "hub_master_02",
     "type": "hub",
     "site": "loc001",
     "controller_type": "ESP32-S3-DevKit v1.0",

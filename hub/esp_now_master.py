@@ -420,7 +420,7 @@ def espnow_receiver_thread(heartbeats=None):
         try:
             host, msg = _e.recv(500)
             if not host or not msg:
-                time.sleep_ms(20)
+                time.sleep_ms(5) # Yield to other threads like MQTT
                 continue
 
             sender_mac_str = bytes_to_mac(host)

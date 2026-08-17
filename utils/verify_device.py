@@ -20,16 +20,17 @@ def get_local_file_hash(path):
         return None
 
 def main():
+    if len(sys.argv) < 2:
+        print("Usage: python utils/verify_device.py <COM_PORT>")
+        sys.exit(1)
+    port = sys.argv[1]
+
     # Resolve project root (parent of utils) and mpremote path
     utils_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(utils_dir)
-    mpremote = os.path.join(project_root, '.venv', 'Scripts', 'mpremote.exe')
-    
-    if not os.path.exists(mpremote):
-        print(f"Error: mpremote not found at {mpremote}")
-        sys.exit(1)
+    mpremote = 'mpremote'
 
-    print("Fetching file list and checksums from ESP32 device...")
+    print(f"Fetching file list and checksums from ESP32 device on {port}...")
     
     # MicroPython script to run on the device
     device_script = (
@@ -66,7 +67,7 @@ def main():
     # Run the script on the device
     try:
         proc = subprocess.run(
-            [mpremote, 'connect', 'COM3', 'exec', device_script],
+            [mpremote, 'connect', port, 'exec', device_script],
             capture_output=True,
             text=True,
             check=True
