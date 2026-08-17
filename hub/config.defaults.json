@@ -13,7 +13,7 @@
     "networks": []
   },
   "mqtt": {
-    "server": "192.168.1.100",
+    "server": "10.10.10.211",
     "port": 1883,
     "user": "",
     "password": "",

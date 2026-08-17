@@ -225,11 +225,8 @@ def execute_command(cmd, args):
             ota_url = args_dict.get("url") or ota_cfg.get("base_url") or "http://10.10.10.211:8000/fw"
             manifest_name = args_dict.get("manifest_name") or ota_cfg.get("manifest") or "manifest.json"
             
-            client_type = client_info.get("type", "valve").lower()
-            hw_ver = client_info.get("hardware_version", "esp32_1.0")
             fw_ver = args_dict.get("version") or client_info.get("firmware_version", "valve_v1.0.0")
-            
-            base_url = f"{ota_url.rstrip('/')}/{client_type}/{hw_ver}/{fw_ver}"
+            base_url = ota_url.rstrip('/')
             
             print(f"📡 Downloading manifest from: {base_url}/{manifest_name}")
             manifest = ota.fetch_manifest(base_url, manifest_name)
@@ -352,8 +349,11 @@ def main():
                         "rssi": -50
                     })
 
+            time.sleep_ms(100)
+
         except Exception as err:
             print(" Valve Loop Error:", err)
+            time.sleep(1)
             
 try:
     main()

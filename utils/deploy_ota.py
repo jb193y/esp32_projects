@@ -65,7 +65,7 @@ def main():
     else:
         fw_ver = client_cfg.get("firmware_version", "v1.0.0")
         
-    print(f"📦 Packaging OTA Release for '{component}'...")
+    print(f"Packaging OTA Release for '{component}'...")
     print(f" - Device Type: {device_type}")
     print(f" - HW Version:  {hw_ver}")
     print(f" - FW Version:  {fw_ver}")
@@ -137,17 +137,17 @@ def main():
     remote_root = ota_cfg.get("remote_path", "/srv/ota/fw")
     ota_url = ota_cfg.get("base_url", "http://10.10.10.211:8000/fw")
     
-    print(f"\n📡 Connecting to server {ssh_user_host} to create path {remote_root}...")
+    print(f"\nConnecting to server {ssh_user_host} to create path {remote_root}...")
     try:
         subprocess.run(
             ["ssh", ssh_user_host, f"mkdir -p {remote_root}"],
             check=True
         )
     except Exception as e:
-        print(f"❌ Error: Failed to create remote directory via SSH. Details: {e}")
+        print(f"Error: Failed to create remote directory via SSH. Details: {e}")
         sys.exit(1)
         
-    print("📤 Uploading firmware files recursively to remote root...")
+    print("Uploading firmware files recursively to remote root...")
     try:
         # Upload staged folder contents to remote root
         # Staging folder has: hub/ (or valve_controller/), lib/, manifest_{component}.json
@@ -155,7 +155,7 @@ def main():
             ["scp", "-r", os.path.join(staging_dir, "."), f"{ssh_user_host}:{remote_root}/"],
             check=True
         )
-        print(f"\n🎉 Success: Firmware release successfully deployed to OTA server!")
+        print(f"\nSuccess: Firmware release successfully deployed to OTA server!")
         print(f"Remote Path: {remote_root}/")
         
         # 5. Publish MQTT Trigger Command in Standard JSON Envelope
@@ -190,7 +190,7 @@ def main():
             }
         })
         
-        print(f"\n📢 Publishing OTA trigger to MQTT broker ({mqtt_server}:{mqtt_port}) on topic '{command_topic}'...")
+        print(f"\nPublishing OTA trigger to MQTT broker ({mqtt_server}:{mqtt_port}) on topic '{command_topic}'...")
         try:
             import paho.mqtt.publish as publish
             publish.single(
@@ -200,12 +200,12 @@ def main():
                 port=mqtt_port,
                 retain=False
             )
-            print("✅ MQTT trigger published successfully!")
+            print("MQTT trigger published successfully!")
         except Exception as mq_err:
-            print(f"⚠️ Warning: Failed to publish MQTT trigger: {mq_err}")
+            print(f"Warning: Failed to publish MQTT trigger: {mq_err}")
 
     except Exception as e:
-        print(f"❌ Error: Failed to copy files via SCP: {e}")
+        print(f"Error: Failed to copy files via SCP: {e}")
         sys.exit(1)
     finally:
         # Clean up local staging directory

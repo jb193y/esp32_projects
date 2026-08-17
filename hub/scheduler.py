@@ -87,18 +87,19 @@ def scheduler_thread(heartbeats=None, dispatch_fn=None):
                 continue
                 
         # 2. Check if we can start a new irrigation cycle
-        allowed, status_str = check_pump_allowed()
-        if allowed and len(_queue) > 0:
-            with _lock:
-                node_id, deficit, duration = _queue.pop(0)
-                
-            print(f"Starting irrigation: {node_id} (Deficit={deficit}, Duration={duration}s)")
-            if dispatch_fn:
-                # Dispatch PUMP_ON to node
-                dispatch_fn(node_id, "PUMP_ON", [], {"duration": duration})
-                active_node = node_id
-                active_end_time = now + duration
-            else:
-                print("No dispatch function registered with scheduler")
+        if len(_queue) > 0:
+            allowed, status_str = check_pump_allowed()
+            if allowed:
+                with _lock:
+                    node_id, deficit, duration = _queue.pop(0)
+                    
+                print(f"Starting irrigation: {node_id} (Deficit={deficit}, Duration={duration}s)")
+                if dispatch_fn:
+                    # Dispatch PUMP_ON to node
+                    dispatch_fn(node_id, "PUMP_ON", [], {"duration": duration})
+                    active_node = node_id
+                    active_end_time = now + duration
+                else:
+                    print("No dispatch function registered with scheduler")
                 
         time.sleep(2)

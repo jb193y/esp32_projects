@@ -251,11 +251,8 @@ def on_message(topic, msg):
                     ota_url = args.get("url") or ota_cfg.get("base_url") or "http://10.10.10.211:8000/fw"
                     manifest_name = args.get("manifest_name") or ota_cfg.get("manifest") or "manifest.json"
                     
-                    client_type = client_info.get("type", "hub").lower()
-                    hw_ver = client_info.get("hardware_version", "esp32_1.0")
                     fw_ver = args.get("version") or client_info.get("firmware_version", "hub_v1.0.0")
-                    
-                    base_url = f"{ota_url.rstrip('/')}/{client_type}/{hw_ver}/{fw_ver}"
+                    base_url = ota_url.rstrip('/')
                     
                     print(f"📡 Downloading OTA manifest from: {base_url}/{manifest_name}")
                     manifest = ota.fetch_manifest(base_url, manifest_name)
