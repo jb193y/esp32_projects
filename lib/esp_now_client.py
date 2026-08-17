@@ -28,6 +28,7 @@ def set_wifi_channel(ch):
 
 _e = None
 _paired = False
+_last_hub_rx_time = time.time()
 
 def mac_to_bytes(mac_str):
     return bytes(int(x, 16) for x in mac_str.split(':'))
@@ -43,12 +44,6 @@ def get_hub_id():
             hub_id = hub_cfg.get(key)
             if hub_id:
                 return str(hub_id)
-
-    client_cfg = cfg.get("client", {})
-    if isinstance(client_cfg, dict):
-        client_id = client_cfg.get("id")
-        if client_id and str(client_id).lower() != "unknown_node":
-            return str(client_id)
 
     return "hub_master_01"
 
@@ -191,7 +186,7 @@ def send_to_hub(msg_type, payload):
 _pair_channel_idx = 0
 
 def send_pairing_request():
-    global _e, _pair_channel_idx
+    global _e, _pair_channel_idx, _last_hub_rx_time
     if _e is None:
         return
 
@@ -205,13 +200,16 @@ def send_pairing_request():
         "custom_name": client_cfg.get("custom_name", "Client Node")
     }
 
-    # Dynamic Mesh Multi-Channel Scanning:
-    # If already paired and we have a valid parent/hub MAC, send unicast on configured channel
     hub_mac = cfg.get("hub", {}).get("mac", "")
-    is_valid_mac = is_paired() and len(hub_mac) == 17 and hub_mac.count(':') == 5
+    has_saved_hub = len(hub_mac) == 17 and hub_mac.count(':') == 5
+    time_since_last_rx = time.time() - _last_hub_rx_time
 
-    if is_valid_mac:
-        print(f"Sending PAIR_REQ unicast to Hub {hub_mac}...")
+    # If we have a saved Hub, try contacting it on its saved channel for up to 20s
+    # before starting dynamic multi-channel scanning
+    if has_saved_hub and time_since_last_rx < 20:
+        saved_ch = cfg.get("wifi", {}).get("channel", 4)
+        set_wifi_channel(saved_ch)
+        print(f"Sending PAIR_REQ unicast to Hub {hub_mac} on Channel {saved_ch}...")
         send_ack_or_tele_to_hub("STATUS", payload, target_mac=hub_mac)
     else:
         # Multi-Channel Mesh Scanning: cycle channels (4, 6, 1, 11) to discover nearby Hub/Repeater
@@ -256,7 +254,7 @@ def init_espnow_client(on_cmd_received_fn=None):
     return _e
 
 def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
-    global _e, _paired
+    global _e, _paired, _last_hub_rx_time
     if _e is None:
         return
         
@@ -267,14 +265,14 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
     client_cfg = cfg.get("client", {})
     local_id = client_cfg.get("id", "").lower()
     
-    last_hub_rx_time = time.time()
+    _last_hub_rx_time = time.time()
     
     while True:
         if heartbeats is not None:
             heartbeats["esp_now"] = time.time()
             
         # Fallback to scanning if we lose contact with our paired Hub for 45s
-        if _paired and time.time() - last_hub_rx_time > 45:
+        if _paired and time.time() - _last_hub_rx_time > 45:
             print(" Lost contact with Hub for 45s. Re-entering scanning mode...")
             _paired = False
             
@@ -309,7 +307,7 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                     
                     if not _paired or (is_our_hub and b_ch and current_cfg.get("wifi", {}).get("channel") != b_ch):
                         print(f" Received BEACON from {'paired ' if _paired else ''}Hub {hub_mac} (Channel: {b_ch})")
-                        last_hub_rx_time = time.time()
+                        _last_hub_rx_time = time.time()
                         try:
                             upd = {"hub": {"mac": hub_mac}, "parent": {"mac": parent_mac}}
                             if b_ch:
@@ -323,7 +321,7 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                     ack_pld = packet.get("data") or packet.get("pld", {})
                     if ack_pld.get("status") == "paired":
                         _paired = True
-                        last_hub_rx_time = time.time()
+                        _last_hub_rx_time = time.time()
                         hub_mac = ack_pld.get("hub_mac", sender_mac)
                         hub_ch = ack_pld.get("channel")
                         print(f"Client paired successfully with Hub ({hub_mac}) on Channel {hub_ch}!")
@@ -343,7 +341,7 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                 current_cfg = config.load_config()
                 paired_hub = current_cfg.get("hub", {}).get("mac", "")
                 if sender_mac.lower().replace(':', '') == paired_hub.lower().replace(':', ''):
-                    last_hub_rx_time = time.time()
+                    _last_hub_rx_time = time.time()
                     
                 if is_actually_for_us and (msg_type == "COMMAND" or msg_type == "CMD") and on_cmd_received_fn is not None:
                     payload = packet.get("data") or packet.get("pld", {})
