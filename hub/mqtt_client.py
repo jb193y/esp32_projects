@@ -312,10 +312,12 @@ def mqtt_thread(heartbeats=None):
     client_type = client_info.get("type", "hub").lower()
     site = client_info.get("site", "default_site")
     group = client_info.get("group", "all")
-    
     # The hub's own command topic, using the new namespaced format
     cmd_topic = f"{site}/{group}/{client_type}/{client_id}/command"
     status_topic = f"{site}/{group}/{client_type}/{client_id}/status"
+    telemetry_interval = mqtt_cfg.get("telemetry_interval_sec", 30)
+    
+    last_telemetry_time = 0
     
     while True:
         if heartbeats is not None:
@@ -336,7 +338,7 @@ def mqtt_thread(heartbeats=None):
                     port=mqtt_cfg.get("port", 1883),
                     user=mqtt_cfg.get("user", ""),
                     password=mqtt_cfg.get("password", ""),
-                    keepalive=mqtt_cfg.get("keepalive", 60)
+                    keepalive=mqtt_cfg.get("keepalive", 20)
                 )
                 
                 # Configure Last Will and Testament (LWT) for abrupt disconnects in standard envelope
@@ -405,10 +407,6 @@ def mqtt_thread(heartbeats=None):
                 else:
                     print("ERROR: 'site' not set in config. Cannot publish hub status.")
                 
-                # Publish initial Hub status telemetry
-                hub_status = cfg.get("client", {}).get("status", "Enabled")
-                publish_hub_telemetry(hub_status)
-
                 # Check if device is pending provision confirmation
                 global _timer_started
                 client_mode = cfg.get("client", {}).get("mode", "normal")
@@ -436,5 +434,12 @@ def mqtt_thread(heartbeats=None):
             if err_num not in (11, 110):
                 print("MQTT connection error check:", e)
                 _is_connected = False
+        
+        # Periodically publish hub status telemetry to keep connection alive and provide updates
+        now = time.time()
+        if _is_connected and (now - last_telemetry_time > telemetry_interval):
+            hub_status = cfg.get("client", {}).get("status", "Enabled")
+            publish_hub_telemetry(hub_status)
+            last_telemetry_time = now
             
         time.sleep(0.1)

@@ -2,7 +2,7 @@
   "client": {
     "id": "hub_master_02",
     "type": "hub",
-    "site": "loc001",
+    "site": "global",
     "controller_type": "ESP32-S3-DevKit v1.0",
     "board_type": "ESP32-S3-DevKit v1.0",
     "custom_name": "AgriPulse Master Hub",
@@ -17,8 +17,8 @@
     "port": 1883,
     "user": "",
     "password": "",
-    "keepalive": 60,
-    "topic_prefix": "farm/hub_master_01"
+    "keepalive": 120,
+    "telemetry_interval_sec": 60
   },
   "scheduler": {
     "irrigation_deficit_threshold": 10.0,

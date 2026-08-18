@@ -172,7 +172,10 @@ def send_espnow_msg(target_mac_str, msg_dict, routing_path=None, target_id=None)
         payload_str = ujson.dumps(envelope)
         try:
             _e.send(next_hop_bytes, payload_str.encode('utf-8'))
-            print(" ESP-NOW broadcasted message to", phys_mac)
+            if phys_mac == "ff:ff:ff:ff:ff:ff":
+                print(" ESP-NOW broadcasted message")
+            else:
+                print(f" ESP-NOW unicasted message to {phys_mac}")
             return True
         except Exception as send_err:
             print(" ESP-NOW send notice:", send_err)
@@ -374,6 +377,7 @@ def espnow_receiver_thread(heartbeats=None):
         if heartbeats is not None:
             heartbeats["esp_now"] = time.time()
 
+        # Handle mesh discovery beaconing
         now = config.get_unix_time()
         if now < _discovery_active_until:
             if not was_discovery_active:
@@ -432,30 +436,34 @@ def espnow_receiver_thread(heartbeats=None):
             recv_buffers[sender_mac_str] = buf
             recv_last_seen[sender_mac_str] = now
 
+            print(f" ESP-NOW packet received from {sender_mac_str}, buffer size: {len(buf)} bytes")
             try:
                 objs, remainder = _extract_json_objects_from_bytes(buf)
             except Exception:
                 recv_buffers[sender_mac_str] = b''
                 continue
-
+            print(f"  Extracted {len(objs)} JSON object(s) from buffer, remainder size: {len(remainder)} bytes")
+            
             if not objs:
                 if len(buf) > 4096:
                     recv_buffers[sender_mac_str] = b''
                 continue
 
-            packet = None
             for obj_bytes in objs:
                 try:
                     payload_str = obj_bytes.decode('utf-8')
                 except Exception:
                     payload_str = obj_bytes.decode('utf-8', 'ignore')
                 try:
-                    packet = parse_packet(payload_str)
+                    packet = parse_packet(payload_str) # Process each packet
                 except Exception:
                     continue
 
                 if packet is None:
                     continue
+
+                print(f" ESP-NOW packet received from {sender_mac_str}: {packet.get('msg_type')}")
+                print(f"  Payload: {packet.get('data')}")
 
                 recv_buffers[sender_mac_str] = remainder
                 recv_last_seen[sender_mac_str] = now
