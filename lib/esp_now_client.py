@@ -29,12 +29,60 @@ def set_wifi_channel(ch):
 _e = None
 _paired = False
 _last_hub_rx_time = time.time()
+MAX_RX_BUFFER = 2048
 
 def mac_to_bytes(mac_str):
     return bytes(int(x, 16) for x in mac_str.split(':'))
 
 def bytes_to_mac(mac_bytes):
     return ':'.join('%02x' % b for b in mac_bytes)
+
+
+def extract_complete_json_payload(buf):
+    """Return the first complete JSON object in buf, along with any remaining bytes."""
+    if not buf:
+        return None, b""
+
+    if len(buf) > MAX_RX_BUFFER:
+        return None, b""
+
+    start = buf.find(b'{')
+    if start == -1:
+        return None, b""
+
+    # Ignore leading garbage before the first JSON object.
+    buf = buf[start:]
+    depth = 0
+    in_string = False
+    escape = False
+
+    for i, b in enumerate(buf):
+        if in_string:
+            if escape:
+                escape = False
+            elif b == 92:  # backslash
+                escape = True
+            elif b == 34:  # quote
+                in_string = False
+            continue
+
+        if b == 34:  # quote
+            in_string = True
+        elif b == 123:  # {
+            depth += 1
+        elif b == 125:  # }
+            depth -= 1
+            if depth == 0:
+                candidate = buf[:i + 1]
+                try:
+                    ujson.loads(candidate.decode('utf-8'))
+                    remainder = buf[i + 1:]
+                    return candidate, remainder
+                except Exception:
+                    return None, b""
+
+    return None, buf
+
 
 def get_hub_id():
     cfg = config.load_config()
@@ -55,25 +103,14 @@ def set_paired(val):
     _paired = val
 
 def add_peer_safe(e, peer_bytes, channel=0):
-    """Add ESP-NOW peer, registering on both STA_IF and AP_IF to support concurrent reception."""
+    """Add/update an ESP-NOW peer. add_peer is idempotent and safe to call multiple times."""
     peer_bytes = bytes(peer_bytes)
-    import network
-
-    # Register on STA interface
-    try:
-        e.del_peer(peer_bytes)
-    except:
-        pass
     try:
         e.add_peer(peer_bytes, b'', channel, network.STA_IF)
-    except:
-        pass
-
-    # Register on AP interface
-    try:
-        e.add_peer(peer_bytes, b'', channel, network.AP_IF)
-    except:
-        pass
+    except OSError as ose:
+        # Ignore 'ESP-NOW peer already exists' error, which is expected.
+        if ose.args[0] != 12293: # ESP_ERR_ESPNOW_EXIST
+            print(f"add_peer_safe notice: {ose}")
 
 def parse_packet(payload_str):
     p = ujson.loads(payload_str)
@@ -257,36 +294,52 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
     global _e, _paired, _last_hub_rx_time
     if _e is None:
         return
-        
+
     sta = network.WLAN(network.STA_IF)
     local_mac = bytes_to_mac(sta.config('mac'))
-    
+
     cfg = config.load_config()
     client_cfg = cfg.get("client", {})
     local_id = client_cfg.get("id", "").lower()
-    
+
     _last_hub_rx_time = time.time()
-    
+    recv_buffers = {}
+
     while True:
         if heartbeats is not None:
             heartbeats["esp_now"] = time.time()
-            
+
         # Fallback to scanning if we lose contact with our paired Hub for 45s
         if _paired and time.time() - _last_hub_rx_time > 45:
             print(" Lost contact with Hub for 45s. Re-entering scanning mode...")
             _paired = False
-            
+
         try:
             host, msg = _e.recv(500)
             if host and msg:
+                # Ignore tiny non-JSON fragments that can appear during ESP-NOW
+                # fragmentation and poison the receive buffer.
+                if len(msg) < 8 and b'{' not in msg:
+                    continue
+
                 sender_mac = bytes_to_mac(host)
-                payload_str = msg.decode('utf-8')
+                buf = recv_buffers.get(sender_mac, b"") + msg
+                recv_buffers[sender_mac] = buf
+
+                payload_bytes, remainder = extract_complete_json_payload(buf)
+                if payload_bytes is None:
+                    if len(recv_buffers[sender_mac]) > MAX_RX_BUFFER or (len(msg) < 8 and b'{' not in msg):
+                        recv_buffers[sender_mac] = b""
+                    continue
+
+                recv_buffers[sender_mac] = remainder
+                payload_str = payload_bytes.decode('utf-8')
                 print(f" Received packet from {sender_mac}: {payload_str}")
-                
+
                 packet = parse_packet(payload_str)
                 msg_type = packet.get("msg_type")
                 target = packet.get("target")
-                
+
                 is_for_us = False
                 if target:
                     t_lower = target.lower()
@@ -300,11 +353,11 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                     hub_mac = b_pld.get("hub_mac", sender_mac)
                     parent_mac = b_pld.get("sender_mac", sender_mac)
                     b_ch = b_pld.get("channel")
-                    
+
                     current_cfg = config.load_config()
                     paired_hub = current_cfg.get("hub", {}).get("mac", "")
                     is_our_hub = (hub_mac.lower().replace(':', '') == paired_hub.lower().replace(':', ''))
-                    
+
                     if not _paired or (is_our_hub and b_ch and current_cfg.get("wifi", {}).get("channel") != b_ch):
                         print(f" Received BEACON from {'paired ' if _paired else ''}Hub {hub_mac} (Channel: {b_ch})")
                         _last_hub_rx_time = time.time()
@@ -333,23 +386,23 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                             config.update_config(upd)
                         except Exception as ex:
                             print("Error updating config on pairing:", ex)
-                
+
                 # Relaying and target validation
                 is_actually_for_us = relay_engine.process_and_relay(packet)
-                
+
                 # Update RX timestamp if packet is from Hub
                 current_cfg = config.load_config()
                 paired_hub = current_cfg.get("hub", {}).get("mac", "")
                 if sender_mac.lower().replace(':', '') == paired_hub.lower().replace(':', ''):
                     _last_hub_rx_time = time.time()
-                    
+
                 if is_actually_for_us and (msg_type == "COMMAND" or msg_type == "CMD") and on_cmd_received_fn is not None:
                     payload = packet.get("data") or packet.get("pld", {})
                     cmd = payload.get("cmd") or payload.get("command")
-                    
+
                     payload["sender_mac"] = sender_mac
                     payload["routing_path"] = packet.get("hops", [])
-                    
+
                     on_cmd_received_fn(cmd, payload)
             else:
                 if not _paired:
@@ -357,7 +410,7 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                     time.sleep(2) # Reduce sleep to re-attempt pairing faster
                 else:
                     time.sleep_ms(50)
-                    
+
         except Exception as err:
             err_str = str(err)
             if "buffer error" not in err_str:

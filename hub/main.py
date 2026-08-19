@@ -13,6 +13,8 @@ import esp_now_master
 import scheduler
 import factory_reset
 
+ESPNOW_ONLY_TEST = False
+
 heartbeats = {
     "network": time.time(),
     "mqtt": time.time(),
@@ -70,6 +72,7 @@ def main():
         
     client_cfg = cfg.get("client", {})
     mode = client_cfg.get("mode", "ble_setup")
+    espnow_only = ESPNOW_ONLY_TEST or client_cfg.get("espnow_only", False)
     
     if mode == "ble_setup":
         print("BLE Setup mode configured. Initializing provisioning...")
@@ -81,14 +84,21 @@ def main():
     print("Booting into STA normal operations...")
     led_status.set_status("WIFI_CONNECTING")
     
-    # Register command callbacks
-    mqtt_client.register_cmd_dispatcher(esp_now_master.dispatch_command_from_mqtt)
-    
-    # Launch worker threads
-    _thread.start_new_thread(network_manager.wan_thread, (heartbeats,))
-    _thread.start_new_thread(mqtt_client.mqtt_thread, (heartbeats,))
+    # Launch only the services needed for the ESP-NOW transport test.
+    if espnow_only:
+        print("ESP-NOW-only test mode: WAN, MQTT, and scheduler disabled")
+        heartbeats.pop("network", None)
+        heartbeats.pop("mqtt", None)
+        heartbeats.pop("scheduler", None)
+        mqtt_client.set_enabled(False)
+    else:
+        mqtt_client.register_cmd_dispatcher(esp_now_master.dispatch_command_from_mqtt)
+        _thread.start_new_thread(network_manager.wan_thread, (heartbeats,))
+        _thread.start_new_thread(mqtt_client.mqtt_thread, (heartbeats,))
+
     _thread.start_new_thread(esp_now_master.espnow_receiver_thread, (heartbeats,))
-    _thread.start_new_thread(scheduler.scheduler_thread, (heartbeats, esp_now_master.send_espnow_msg))
+    if not espnow_only:
+        _thread.start_new_thread(scheduler.scheduler_thread, (heartbeats, esp_now_master.send_espnow_msg))
     _thread.start_new_thread(watchdog_thread, ())
     
     print("All Hub systems active!")

@@ -56,6 +56,7 @@ class ReentrantLock:
 _client = None
 _lock = ReentrantLock()
 _is_connected = False
+_enabled = True
 _provision_confirmed = False
 _timer_started = False
 
@@ -108,6 +109,13 @@ def register_cmd_dispatcher(dispatcher):
 
 def is_connected():
     return _is_connected
+
+def set_enabled(enabled):
+    global _enabled, _client, _is_connected
+    _enabled = bool(enabled)
+    if not _enabled:
+        _client = None
+        _is_connected = False
 
 def publish_hub_telemetry(status_val):
     try:
@@ -287,7 +295,7 @@ def _blink_hub_led_bg():
 
 def publish_msg(topic, payload, retain=False):
     global _client, _is_connected
-    if not _is_connected or _client is None:
+    if not _enabled or not _is_connected or _client is None:
         return False
     try:
         _lock.acquire()

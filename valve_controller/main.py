@@ -338,7 +338,7 @@ def main():
             # Send periodic telemetry if paired
             if esp_now_client.is_paired():
                 now = time.time()
-                if now - last_telemetry_time >= 10:
+                if now - last_telemetry_time >= 30:
                     last_telemetry_time = now
                     any_open = any(v.get("state") == "OPEN" for v in valves.values())
                     node_status = "watering" if any_open else "valve_idle"

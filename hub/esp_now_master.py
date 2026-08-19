@@ -5,6 +5,7 @@ import ujson
 import time
 import ubinascii
 import os
+import gc
 import config
 import mqtt_client
 import scheduler
@@ -14,6 +15,7 @@ NODES_FILE = "nodes.json"
 # Per-sender receive buffers to assemble fragmented ESP-NOW packets
 recv_buffers = {}
 recv_last_seen = {}
+MAX_RX_BUFFER = 2048
 
 def _extract_json_objects_from_bytes(b):
     """Return (list_of_byte_objects, remainder_bytes).
@@ -87,25 +89,14 @@ def save_node(mac_str, node_type, node_id=None, name=None):
     return nodes[mac_str]
 
 def add_peer_safe(e, peer_bytes, channel=0):
-    """Add ESP-NOW peer, registering on both STA_IF and AP_IF to support concurrent reception."""
+    """Add/update an ESP-NOW peer. add_peer is idempotent."""
     peer_bytes = bytes(peer_bytes)
-    import network
-
-    # Register on STA interface
-    try:
-        e.del_peer(peer_bytes)
-    except:
-        pass
     try:
         e.add_peer(peer_bytes, b'', channel, network.STA_IF)
-    except:
-        pass
-
-    # Register on AP interface
-    try:
-        e.add_peer(peer_bytes, b'', channel, network.AP_IF)
-    except:
-        pass
+    except OSError as ose:
+        # Ignore 'ESP-NOW peer already exists' error, which is expected.
+        if ose.args[0] != 23:
+            print(f"add_peer_safe notice: {ose}")
 
 def parse_packet(payload_str):
     p = ujson.loads(payload_str)
@@ -361,14 +352,22 @@ def espnow_receiver_thread(heartbeats=None):
     except:
         pass
 
+    # In ESP-NOW-only mode, no WAN thread sets the radio channel for us.
+    try:
+        cfg = config.load_config()
+        if cfg.get("client", {}).get("espnow_only", False):
+            active_ch = cfg.get("wifi", {}).get("channel", 6)
+            sta.config(channel=active_ch)
+            print(f" ESP-NOW-only test channel: {active_ch}")
+    except Exception as ch_err:
+        print(f" ESP-NOW-only channel notice: {ch_err}")
+
     _e = espnow.ESPNow()
     _e.active(True)
     try:
         _e.config(rxbuf=4096)
     except Exception as ex:
         print("rxbuf config notice:", ex)
-
-    add_peer_safe(_e, b'\xff\xff\xff\xff\xff\xff')
 
     _last_beacon_time = 0
     was_discovery_active = False
@@ -422,56 +421,44 @@ def espnow_receiver_thread(heartbeats=None):
                     pass
 
         try:
-            host, msg = _e.recv(500)
+            host, msg = _e.recv(5000)
+            print(f" ESP-NOW recv: host={bytes_to_mac(host) if host else None}, msg_len={len(msg) if msg else 0}")
+            print(f"  DEBUG: Raw msg from _e.recv(): {msg!r}") # Added debug print to see the actual bytes
+            print(f"  Current recv_buffers keys: {list(recv_buffers.keys())}")
+            
             if not host or not msg:
                 time.sleep_ms(5) # Yield to other threads like MQTT
                 continue
 
             sender_mac_str = bytes_to_mac(host)
-            last_seen = recv_last_seen.get(sender_mac_str, now)
-            if now - last_seen > 5 and recv_buffers.get(sender_mac_str):
-                recv_buffers[sender_mac_str] = b''
-
-            buf = recv_buffers.get(sender_mac_str, b'') + bytes(msg)
-            recv_buffers[sender_mac_str] = buf
-            recv_last_seen[sender_mac_str] = now
-
-            print(f" ESP-NOW packet received from {sender_mac_str}, buffer size: {len(buf)} bytes")
-            try:
-                objs, remainder = _extract_json_objects_from_bytes(buf)
-            except Exception:
-                recv_buffers[sender_mac_str] = b''
-                continue
-            print(f"  Extracted {len(objs)} JSON object(s) from buffer, remainder size: {len(remainder)} bytes")
+            # Proactively add any sender as a peer to ensure reliable unicast reception.
+            add_peer_safe(_e, host)
             
-            if not objs:
-                if len(buf) > 4096:
-                    recv_buffers[sender_mac_str] = b''
+            gc.collect() # Ensure memory is clean before processing
+
+            # ESP-NOW delivers this application packet as one datagram. Do not
+            # append later datagrams to an old JSON buffer; a stray fragment such
+            # as b'{' would otherwise poison the next packet.
+            try:
+                payload_str = bytes(msg).decode('utf-8')
+                packet = parse_packet(payload_str)
+            except Exception:
+                print(f"  Ignoring invalid ESP-NOW datagram from {sender_mac_str}")
+                recv_buffers[sender_mac_str] = b''
+                recv_last_seen[sender_mac_str] = now
                 continue
 
-            for obj_bytes in objs:
-                try:
-                    payload_str = obj_bytes.decode('utf-8')
-                except Exception:
-                    payload_str = obj_bytes.decode('utf-8', 'ignore')
-                try:
-                    packet = parse_packet(payload_str) # Process each packet
-                except Exception:
-                    continue
+            recv_buffers[sender_mac_str] = b''
+            recv_last_seen[sender_mac_str] = now
+            print(f" ESP-NOW packet received from {sender_mac_str}: {packet.get('msg_type')}")
+            print(f"  Payload: {packet.get('data')}")
 
-                if packet is None:
-                    continue
+            msg_type = packet.get("msg_type")
+            target = packet.get("target", "")
+            source = packet.get("source")
+            data = packet.get("data", {})
 
-                print(f" ESP-NOW packet received from {sender_mac_str}: {packet.get('msg_type')}")
-                print(f"  Payload: {packet.get('data')}")
-
-                recv_buffers[sender_mac_str] = remainder
-                recv_last_seen[sender_mac_str] = now
-                msg_type = packet.get("msg_type")
-                target = packet.get("target", "")
-                source = packet.get("source")
-                data = packet.get("data", {})
-
+            if packet:
                 cfg = config.load_config()
                 client_id = cfg.get("client", {}).get("id", "hub_master_01")
                 hub_sta_mac = bytes_to_mac(sta.config('mac'))
@@ -659,6 +646,9 @@ def espnow_receiver_thread(heartbeats=None):
                         "data": alert_payload
                     }
                     mqtt_client.publish_msg(alert_topic, mqtt_payload)
+
+            recv_buffers[sender_mac_str] = b''
+            recv_last_seen[sender_mac_str] = now
 
         except Exception as e:
             err_str = str(e)
