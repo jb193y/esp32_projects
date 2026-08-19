@@ -379,7 +379,7 @@ def hub_rx_processor_loop():
             try:
                 payload_str = payload_bytes.decode('utf-8')
             except Exception as decode_err:
-                print(f"  Ignoring non-UTF-8 payload from {sender_mac_str}: {decode_err}")
+                print(f"  Ignoring non-UTF-8 payload from {sender_mac_str}: {decode_err} | Raw: {payload_bytes}")
                 continue
             
             try:
