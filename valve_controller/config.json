@@ -1,12 +1,16 @@
 {
   "client": {
-    "id": "valve_node_01",
-    "custom_name": "Valve Node 01",
+    "id": "valve_node_02",
+    "custom_name": "Valve Node 02",
     "type": "valve",
     "controller_type": "YD-ESP32-S3 2022-V1.3",
     "board_type": "YD-ESP32-S3 2022-V1.3",
     "firmware_version": "valve_v1.0.0",
-    "mode": "normal"
+    "mode": "normal",
+    "espnow_broadcast_only": false,
+    "espnow_random_test": true,
+    "espnow_random_min_sec": 5,
+    "espnow_random_max_sec": 15
   },
   "wifi": {
     "channel": 6,
@@ -18,7 +22,7 @@
     ]
   },
   "hub": {
-    "mac": "00:00:00:00:00:00"
+    "mac": "dc:b4:d9:14:23:3c"
   },
   "parent": {
     "mac": "00:00:00:00:00:00"

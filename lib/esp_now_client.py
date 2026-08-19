@@ -29,6 +29,8 @@ def set_wifi_channel(ch):
 _e = None
 _paired = False
 _last_hub_rx_time = time.time()
+_last_pairing_tx_time = 0
+_stop_requested = False
 MAX_RX_BUFFER = 2048
 
 def mac_to_bytes(mac_str):
@@ -102,6 +104,17 @@ def set_paired(val):
     global _paired
     _paired = val
 
+def stop_client():
+    global _stop_requested, _paired, _e
+    _stop_requested = True
+    _paired = False
+    if _e is not None:
+        try:
+            _e.active(False)
+        except Exception:
+            pass
+    print(" ESP-NOW Client stopped")
+
 def add_peer_safe(e, peer_bytes, channel=0):
     """Add/update an ESP-NOW peer. add_peer is idempotent and safe to call multiple times."""
     peer_bytes = bytes(peer_bytes)
@@ -109,7 +122,7 @@ def add_peer_safe(e, peer_bytes, channel=0):
         e.add_peer(peer_bytes, b'', channel, network.STA_IF)
     except OSError as ose:
         # Ignore 'ESP-NOW peer already exists' error, which is expected.
-        if ose.args[0] != 12293: # ESP_ERR_ESPNOW_EXIST
+        if ose.args[0] not in (23, 12293, -12395):
             print(f"add_peer_safe notice: {ose}")
 
 def parse_packet(payload_str):
@@ -176,9 +189,11 @@ def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
     cfg = config.load_config()
     client_cfg = cfg.get("client", {})
     source_id = client_cfg.get("id", "unknown_node")
+    broadcast_only = client_cfg.get("espnow_broadcast_only", False)
 
-    # If it is status pairing request or target_mac is broadcast, target is broadcast
-    is_broadcast = (target_mac == "ff:ff:ff:ff:ff:ff" or msg_type == "PAIR_REQ" or (msg_type == "STATUS" and payload.get("status") == "pairing_request"))
+    # Only an explicit broadcast destination uses broadcast routing. A pairing
+    # request can be a unicast STATUS packet when a hub MAC is configured.
+    is_broadcast = (broadcast_only or target_mac == "ff:ff:ff:ff:ff:ff")
     target_id = "broadcast" if is_broadcast else get_hub_id()
 
     # Get pre-provisioned route or dynamic fallback
@@ -198,16 +213,18 @@ def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
     }
 
     # Use unicast next-hop MAC from routing path if available, otherwise fallback to broadcast
-    phys_mac = target_mac or (hops[0] if hops else "ff:ff:ff:ff:ff:ff")
+    phys_mac = "ff:ff:ff:ff:ff:ff" if broadcast_only else (target_mac or (hops[0] if hops else "ff:ff:ff:ff:ff:ff"))
     next_hop_bytes = mac_to_bytes(phys_mac)
 
     try:
+        # This firmware requires even the broadcast MAC to be registered.
         add_peer_safe(_e, next_hop_bytes)
         payload_str = ujson.dumps(envelope)
         try:
             res = _e.send(next_hop_bytes, payload_str.encode('utf-8'))
             print(f" Envelope sent to next hop {phys_mac} for destination {target_id} (res={res})")
             print(payload_str.encode('utf-8'))
+            print()
             return res
         except Exception as send_err:
             print(f" ESP-NOW send notice to {phys_mac}: {send_err}")
@@ -223,7 +240,7 @@ def send_to_hub(msg_type, payload):
 _pair_channel_idx = 0
 
 def send_pairing_request():
-    global _e, _pair_channel_idx, _last_hub_rx_time
+    global _e, _pair_channel_idx, _last_hub_rx_time, _last_pairing_tx_time
     if _e is None:
         return
 
@@ -240,6 +257,17 @@ def send_pairing_request():
     hub_mac = cfg.get("hub", {}).get("mac", "")
     has_saved_hub = len(hub_mac) == 17 and hub_mac.count(':') == 5
     time_since_last_rx = time.time() - _last_hub_rx_time
+    broadcast_only = client_cfg.get("espnow_broadcast_only", False)
+
+    if broadcast_only:
+        if time.time() - _last_pairing_tx_time < 3:
+            return
+        _last_pairing_tx_time = time.time()
+        test_ch = cfg.get("wifi", {}).get("channel", 6)
+        set_wifi_channel(test_ch)
+        print(f"ESP-NOW broadcast test: staying on Channel {test_ch}")
+        send_ack_or_tele_to_hub("STATUS", payload, target_mac="ff:ff:ff:ff:ff:ff")
+        return
 
     # If we have a saved Hub, try contacting it on its saved channel for up to 20s
     # before starting dynamic multi-channel scanning
@@ -259,12 +287,13 @@ def send_pairing_request():
 
 
 def init_espnow_client(on_cmd_received_fn=None):
-    global _e
+    global _e, _stop_requested
     if not has_espnow:
         print(" ESP-NOW not supported on this firmware build.")
         return None
 
     cfg = config.load_config()
+    _stop_requested = False
     client_name = cfg.get("client", {}).get("custom_name", "Client Node")
     print(f" Initializing {client_name} ESP-NOW Client...")
     
@@ -305,7 +334,7 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
     _last_hub_rx_time = time.time()
     recv_buffers = {}
 
-    while True:
+    while not _stop_requested:
         if heartbeats is not None:
             heartbeats["esp_now"] = time.time()
 
@@ -416,3 +445,9 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
             if "buffer error" not in err_str:
                 print("Client loop error:", err)
             time.sleep_ms(100)
+
+    try:
+        _e.active(False)
+    except Exception:
+        pass
+    print(" ESP-NOW listener stopped")

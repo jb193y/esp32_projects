@@ -8,7 +8,12 @@
     "custom_name": "AgriPulse Master Hub",
     "firmware_version": "hub_v1.0.0",
     "mode": "normal",
-    "espnow_only": true
+    "espnow_only": true,
+    "espnow_test_peer": "dc:b4:d9:14:2d:50",
+    "espnow_broadcast_only": false,
+    "espnow_command_min_sec": 5,
+    "espnow_command_max_sec": 12,
+    "espnow_test_commands": ["GET_STATUS", "COM_TEST", "BLINK_LED"]
   },
   "wifi": {
     "channel": 6,

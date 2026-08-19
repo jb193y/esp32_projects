@@ -3,6 +3,7 @@ import network
 import espnow
 import ujson
 import time
+import random
 import ubinascii
 import os
 import gc
@@ -133,6 +134,7 @@ def send_espnow_msg(target_mac_str, msg_dict, routing_path=None, target_id=None)
 
     cfg = config.load_config()
     hub_id = cfg.get("client", {}).get("id", "hub_master_01")
+    broadcast_only = cfg.get("client", {}).get("espnow_broadcast_only", False)
 
     if not routing_path:
         routing_path = [target_mac_str]
@@ -155,11 +157,12 @@ def send_espnow_msg(target_mac_str, msg_dict, routing_path=None, target_id=None)
     }
 
     # Use the resolved next-hop MAC in the routing path, falling back to broadcast
-    phys_mac = (routing_path[0] if routing_path else target_mac_str) or "ff:ff:ff:ff:ff:ff"
+    phys_mac = "ff:ff:ff:ff:ff:ff" if broadcast_only else ((routing_path[0] if routing_path else target_mac_str) or "ff:ff:ff:ff:ff:ff")
     next_hop_bytes = mac_to_bytes(phys_mac)
 
     try:
-        add_peer_safe(_e, next_hop_bytes)
+        if phys_mac != "ff:ff:ff:ff:ff:ff":
+            add_peer_safe(_e, next_hop_bytes)
         payload_str = ujson.dumps(envelope)
         try:
             _e.send(next_hop_bytes, payload_str.encode('utf-8'))
@@ -330,6 +333,178 @@ def dispatch_command_from_mqtt(target_node, command, routing_path, args):
             "payload": payload
         }, mac_routing_path, target_id=target_node)
 
+def espnow_test_receiver_thread(heartbeats=None):
+    """Minimal raw ESP-NOW receiver for transport-only testing."""
+    global _e
+    print(" ESP-NOW Test Receiver Started")
+
+    sta = network.WLAN(network.STA_IF)
+    sta.active(True)
+    try:
+        sta.config(pm=network.WLAN.PM_NONE)
+    except Exception:
+        pass
+
+    try:
+        ap = network.WLAN(network.AP_IF)
+        ap.active(False)
+    except Exception:
+        pass
+
+    try:
+        cfg = config.load_config()
+        channel = cfg.get("wifi", {}).get("channel", 6)
+        try:
+            sta.config(channel=channel)
+        except Exception:
+            try:
+                sta.disconnect()
+            except Exception:
+                pass
+            sta.config(channel=channel)
+        print(f" ESP-NOW Test channel: {channel}")
+    except Exception as channel_err:
+        print(f" ESP-NOW Test channel notice: {channel_err}")
+
+    def init_test_espnow():
+        global _e
+        _e = espnow.ESPNow()
+        _e.active(True)
+        try:
+            cfg = config.load_config()
+            test_peer = cfg.get("client", {}).get(
+                "espnow_test_peer", "dc:b4:d9:14:2d:50"
+            )
+            # Match the known-good standalone ESP-NOW test API exactly.
+            _e.add_peer(mac_to_bytes(test_peer))
+            print(f" ESP-NOW Test peer: {test_peer}")
+        except Exception as peer_err:
+            print(f" ESP-NOW Test peer notice: {peer_err}")
+
+    init_test_espnow()
+
+    print(" ESP-NOW Test Receiver Listening")
+    last_test_packet = None
+    test_peers = {}
+    command_sequence = 0
+    test_cfg = config.load_config().get("client", {})
+    command_min_sec = test_cfg.get("espnow_command_min_sec", 5)
+    command_max_sec = test_cfg.get("espnow_command_max_sec", 12)
+    command_choices = tuple(test_cfg.get(
+        "espnow_test_commands", ["GET_STATUS", "COM_TEST", "BLINK_LED"]
+    ))
+    next_command_at = time.time() + random.randint(command_min_sec, command_max_sec)
+    while True:
+        if heartbeats is not None:
+            heartbeats["esp_now"] = time.time()
+
+        try:
+            host, msg = _e.recv(1000)
+            if not host or not msg:
+                if test_peers and time.time() >= next_command_at:
+                    peer_mac = random.choice(list(test_peers.keys()))
+                    peer_info = test_peers[peer_mac]
+                    command_sequence += 1
+                    command = random.choice(command_choices)
+                    command_packet = {
+                        "src": "hub_test",
+                        "dst": peer_info["id"],
+                        "t": "COMMAND",
+                        "ts": int(config.get_unix_time()),
+                        "rt": {"hops": [peer_mac]},
+                        "pld": {
+                            "cmd": command,
+                            "test_seq": command_sequence
+                        }
+                    }
+                    command_bytes = mac_to_bytes(peer_mac)
+                    result = _e.send(command_bytes, ujson.dumps(command_packet).encode('utf-8'))
+                    print(f" ESP-NOW TEST CMD to {peer_mac} ({peer_info['id']}): {command}, res={result}")
+                    print(f" ESP-NOW TEST CMD PACKET: {ujson.dumps(command_packet).encode('utf-8')!r}")
+                    print()
+                    next_command_at = time.time() + random.randint(command_min_sec, command_max_sec)
+                continue
+
+            sender = bytes_to_mac(host)
+            print(f" ESP-NOW TEST RX from {sender}, len={len(msg)}")
+            print(f" ESP-NOW TEST RAW: {msg!r}")
+
+            # VC1 and VC2 may both talk to this test hub. Register each sender
+            # using the same one-argument API as the standalone test.
+            try:
+                _e.add_peer(mac_to_bytes(sender))
+            except OSError:
+                pass
+
+            try:
+                incoming_for_peer = ujson.loads(bytes(msg).decode('utf-8'))
+                peer_id = incoming_for_peer.get("src") or sender
+                test_peers[sender] = {"id": peer_id}
+            except Exception:
+                pass
+
+            packet_key = (sender, bytes(msg))
+            if packet_key == last_test_packet:
+                print(" ESP-NOW TEST duplicate packet; reply suppressed")
+                continue
+            last_test_packet = packet_key
+
+            try:
+                incoming = ujson.loads(bytes(msg).decode('utf-8'))
+                incoming_type = incoming.get("t", "UNKNOWN")
+                incoming_data = incoming.get("pld", {})
+                logical_sender = incoming.get("src") or sender
+                cfg = config.load_config()
+                channel = cfg.get("wifi", {}).get("channel", 6)
+
+                if incoming_type == "ACK":
+                    print(f" ESP-NOW TEST ACK from {sender}: {incoming_data}")
+                    continue
+
+                if incoming_type == "STATUS" and isinstance(incoming_data, dict) and incoming_data.get("status") == "pairing_request":
+                    reply_data = {
+                        "status": "paired",
+                        "hub_mac": bytes_to_mac(sta.config('mac')),
+                        "channel": channel
+                    }
+                else:
+                    reply_data = {
+                        "status": "received",
+                        "received_type": incoming_type,
+                        "received_from": sender
+                    }
+
+                reply = {
+                    "src": "hub_test",
+                    "dst": logical_sender,
+                    "t": "ACK",
+                    "ts": int(config.get_unix_time()),
+                    "rt": {"hops": [sender]},
+                    "pld": reply_data
+                }
+
+                time.sleep_ms(500)
+                reply_peer = mac_to_bytes(sender)
+                result = _e.send(reply_peer, ujson.dumps(reply).encode('utf-8'))
+                print(f" ESP-NOW TEST TX to {sender}, type=ACK, res={result}")
+                print(f" ESP-NOW TEST REPLY: {ujson.dumps(reply).encode('utf-8')!r}")
+                print()
+
+                # This firmware leaves the RX object in a buffer-error state
+                # after a send. Recreate the ESP-NOW object before receiving
+                # the next packet.
+                try:
+                    _e.active(False)
+                except Exception:
+                    pass
+                time.sleep_ms(100)
+                init_test_espnow()
+            except Exception as reply_err:
+                print(f" ESP-NOW Test reply error: {reply_err}")
+        except Exception as recv_err:
+            print(f" ESP-NOW Test receive error: {recv_err}")
+            time.sleep_ms(100)
+
 def espnow_receiver_thread(heartbeats=None):
     global _e
     print(" ESP-NOW Master Receiver Thread Started")
@@ -357,7 +532,16 @@ def espnow_receiver_thread(heartbeats=None):
         cfg = config.load_config()
         if cfg.get("client", {}).get("espnow_only", False):
             active_ch = cfg.get("wifi", {}).get("channel", 6)
-            sta.config(channel=active_ch)
+            try:
+                sta.config(channel=active_ch)
+            except Exception:
+                # Some firmware builds reject channel changes while the STA
+                # state is connected. Disconnect before retrying the change.
+                try:
+                    sta.disconnect()
+                except Exception:
+                    pass
+                sta.config(channel=active_ch)
             print(f" ESP-NOW-only test channel: {active_ch}")
     except Exception as ch_err:
         print(f" ESP-NOW-only channel notice: {ch_err}")
@@ -432,7 +616,9 @@ def espnow_receiver_thread(heartbeats=None):
 
             sender_mac_str = bytes_to_mac(host)
             # Proactively add any sender as a peer to ensure reliable unicast reception.
-            add_peer_safe(_e, host)
+            cfg = config.load_config()
+            if not cfg.get("client", {}).get("espnow_broadcast_only", False):
+                add_peer_safe(_e, host)
             
             gc.collect() # Ensure memory is clean before processing
 

@@ -96,7 +96,9 @@ def main():
         _thread.start_new_thread(network_manager.wan_thread, (heartbeats,))
         _thread.start_new_thread(mqtt_client.mqtt_thread, (heartbeats,))
 
-    _thread.start_new_thread(esp_now_master.espnow_receiver_thread, (heartbeats,))
+    receiver_fn = (esp_now_master.espnow_test_receiver_thread
+                   if espnow_only else esp_now_master.espnow_receiver_thread)
+    _thread.start_new_thread(receiver_fn, (heartbeats,))
     if not espnow_only:
         _thread.start_new_thread(scheduler.scheduler_thread, (heartbeats, esp_now_master.send_espnow_msg))
     _thread.start_new_thread(watchdog_thread, ())

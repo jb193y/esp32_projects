@@ -1,6 +1,7 @@
 # main.py (Valve Controller)
 import _thread
 import time
+import random
 import machine
 import os
 import gc
@@ -13,6 +14,7 @@ import factory_reset
 # State
 valves = {}
 last_telemetry_time = 0
+next_telemetry_delay = 30
 
 # Non-blocking command queue — receive thread enqueues, main loop executes
 _cmd_queue = []
@@ -244,7 +246,7 @@ def execute_command(cmd, args):
             machine.reset()
 
 def main():
-    global last_telemetry_time
+    global last_telemetry_time, next_telemetry_delay
     print(" Valve Controller Starting...")
     
     # 1. Start Status LED
@@ -319,6 +321,9 @@ def main():
     
     # Initialize ESP-NOW client
     esp_now_client.init_espnow_client()
+    if cfg.get("client", {}).get("espnow_broadcast_only", False):
+        # Leave the radio quiet after pairing so the hub can return to recv().
+        last_telemetry_time = time.time() + 2
     
     # Start receiver thread
     heartbeats = {"esp_now": time.time()}
@@ -338,16 +343,31 @@ def main():
             # Send periodic telemetry if paired
             if esp_now_client.is_paired():
                 now = time.time()
-                if now - last_telemetry_time >= 30:
+                random_test = client_cfg.get("espnow_random_test", False)
+                send_interval = next_telemetry_delay
+                if now - last_telemetry_time >= send_interval:
                     last_telemetry_time = now
                     any_open = any(v.get("state") == "OPEN" for v in valves.values())
                     node_status = "watering" if any_open else "valve_idle"
-                    esp_now_client.send_ack_or_tele_to_hub("TELE", {
+                    telemetry = {
                         "node_id": client_cfg.get("id"),
                         "status": node_status,
                         "valves": {vid: v["state"] for vid, v in valves.items()},
                         "rssi": -50
-                    })
+                    }
+                    if random_test:
+                        telemetry["test_seq"] = random.randint(1, 1000000)
+                        telemetry["test_value"] = random.randint(0, 100)
+                        telemetry["test_message"] = "VC_RANDOM_{}".format(
+                            random.randint(1000, 9999)
+                        )
+                        next_telemetry_delay = random.randint(
+                        client_cfg.get("espnow_random_min_sec", 5),
+                        client_cfg.get("espnow_random_max_sec", 15)
+                        )
+                    else:
+                        next_telemetry_delay = 30
+                    esp_now_client.send_ack_or_tele_to_hub("TELE", telemetry)
 
             time.sleep_ms(100)
 
@@ -357,5 +377,12 @@ def main():
             
 try:
     main()
+except KeyboardInterrupt:
+    print(" Keyboard interrupt received; stopping Valve Controller...")
+    try:
+        esp_now_client.stop_client()
+    except Exception as stop_err:
+        print(" ESP-NOW stop notice:", stop_err)
+    print(" Valve Controller stopped")
 except Exception as e:
     print(" Main loop error:", e)
