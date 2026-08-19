@@ -336,6 +336,7 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
 
     _last_hub_rx_time = time.time()
     recv_buffers = {}
+    recv_last_seen = {}
 
     while not _stop_requested:
         if heartbeats is not None:
@@ -357,9 +358,9 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                 sender_mac = bytes_to_mac(host)
                 # Cleanup stale peer buffer if contact gap > 10s
                 now_t = time.time()
-                if now_t - _last_hub_rx_time > 10:
+                if now_t - recv_last_seen.get(sender_mac, now_t) > 10:
                     recv_buffers[sender_mac] = b""
-                _last_hub_rx_time = now_t
+                recv_last_seen[sender_mac] = now_t
 
                 buf = recv_buffers.get(sender_mac, b"") + msg
                 recv_buffers[sender_mac] = buf
