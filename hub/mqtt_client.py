@@ -4,10 +4,13 @@ import usocket
 
 # Enforce a 3.0-second socket timeout on all connection sockets to prevent
 # blocking MQTT connects from starving CPU cores and disrupting ESP-NOW.
-class TimeoutSocket(usocket.socket):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.settimeout(3.0)
+def TimeoutSocket(*args, **kwargs):
+    sock = usocket.socket(*args, **kwargs)
+    try:
+        sock.settimeout(3.0)
+    except Exception:
+        pass
+    return sock
 
 class UsocketWrapper:
     def __init__(self, orig):

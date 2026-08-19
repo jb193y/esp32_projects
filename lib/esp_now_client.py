@@ -372,7 +372,11 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                         break
 
                     recv_buffers[sender_mac] = remainder
-                    payload_str = payload_bytes.decode('utf-8', 'ignore')
+                    try:
+                        payload_str = payload_bytes.decode('utf-8')
+                    except Exception as decode_err:
+                        print(f"  Ignoring non-UTF-8 payload from {sender_mac}: {decode_err}")
+                        continue
                     print(f" Received packet from {sender_mac}: {payload_str}")
 
                     packet = parse_packet(payload_str)

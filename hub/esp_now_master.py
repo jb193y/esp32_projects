@@ -376,7 +376,11 @@ def hub_rx_processor_loop():
                 continue
                 
             sender_mac_str, payload_bytes = item
-            payload_str = payload_bytes.decode('utf-8', 'ignore')
+            try:
+                payload_str = payload_bytes.decode('utf-8')
+            except Exception as decode_err:
+                print(f"  Ignoring non-UTF-8 payload from {sender_mac_str}: {decode_err}")
+                continue
             
             try:
                 packet = parse_packet(payload_str)
@@ -558,7 +562,9 @@ def hub_rx_processor_loop():
             time.sleep_ms(10)
 
         except Exception as loop_err:
-            print(" [Hub RX Processor] Error in loop:", loop_err)
+            import sys
+            print(" [Hub RX Processor] Error in loop:")
+            sys.print_exception(loop_err)
             time.sleep_ms(100)
 
 def espnow_test_receiver_thread(heartbeats=None):
@@ -682,7 +688,11 @@ def espnow_test_receiver_thread(heartbeats=None):
                     break
 
                 recv_buffers[sender] = remainder
-                payload_str = payload_bytes.decode('utf-8', 'ignore')
+                try:
+                    payload_str = payload_bytes.decode('utf-8')
+                except Exception as decode_err:
+                    print(f"  [Test] Ignoring non-UTF-8 payload from {sender}: {decode_err}")
+                    continue
                 print(f" ESP-NOW TEST RX from {sender}, payload={payload_str}")
 
                 try:
