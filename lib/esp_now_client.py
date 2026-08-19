@@ -40,50 +40,15 @@ def bytes_to_mac(mac_bytes):
     return ':'.join('%02x' % b for b in mac_bytes)
 
 
-def extract_complete_json_payload(buf):
-    """Return the first complete JSON object in buf, along with any remaining bytes."""
-    if not buf:
-        return None, b""
-
-    if len(buf) > MAX_RX_BUFFER:
-        return None, b""
-
-    start = buf.find(b'{')
-    if start == -1:
-        return None, b""
-
-    # Ignore leading garbage before the first JSON object.
-    buf = buf[start:]
-    depth = 0
-    in_string = False
-    escape = False
-
-    for i, b in enumerate(buf):
-        if in_string:
-            if escape:
-                escape = False
-            elif b == 92:  # backslash
-                escape = True
-            elif b == 34:  # quote
-                in_string = False
-            continue
-
-        if b == 34:  # quote
-            in_string = True
-        elif b == 123:  # {
-            depth += 1
-        elif b == 125:  # }
-            depth -= 1
-            if depth == 0:
-                candidate = buf[:i + 1]
-                try:
-                    ujson.loads(candidate.decode('utf-8'))
-                    remainder = buf[i + 1:]
-                    return candidate, remainder
-                except Exception:
-                    return None, b""
-
-    return None, buf
+def extract_complete_frame(buf):
+    """Return (frame_bytes, remainder) if a full frame is available, otherwise (None, buf)."""
+    if len(buf) < 2:
+        return None, buf
+    frame_len = int.from_bytes(buf[:2], 'big')
+    total_len = 2 + frame_len
+    if len(buf) < total_len:
+        return None, buf
+    return buf[2:total_len], buf[total_len:]
 
 
 def get_hub_id():
@@ -221,9 +186,9 @@ def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
         add_peer_safe(_e, next_hop_bytes)
         payload_str = ujson.dumps(envelope)
         try:
-            res = _e.send(next_hop_bytes, payload_str.encode('utf-8'))
+            res = _e.send(next_hop_bytes, config.make_frame(payload_str))
             print(f" Envelope sent to next hop {phys_mac} for destination {target_id} (res={res})")
-            print(payload_str.encode('utf-8'))
+            print(config.make_frame(payload_str))
             print()
             return res
         except Exception as send_err:
@@ -352,87 +317,94 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                     continue
 
                 sender_mac = bytes_to_mac(host)
+                # Cleanup stale peer buffer if contact gap > 10s
+                now_t = time.time()
+                if now_t - _last_hub_rx_time > 10:
+                    recv_buffers[sender_mac] = b""
+                _last_hub_rx_time = now_t
+
                 buf = recv_buffers.get(sender_mac, b"") + msg
                 recv_buffers[sender_mac] = buf
 
-                payload_bytes, remainder = extract_complete_json_payload(buf)
-                if payload_bytes is None:
-                    if len(recv_buffers[sender_mac]) > MAX_RX_BUFFER or (len(msg) < 8 and b'{' not in msg):
-                        recv_buffers[sender_mac] = b""
-                    continue
+                while True:
+                    payload_bytes, remainder = extract_complete_frame(recv_buffers[sender_mac])
+                    if payload_bytes is None:
+                        if len(recv_buffers[sender_mac]) > MAX_RX_BUFFER:
+                            recv_buffers[sender_mac] = b""
+                        break
 
-                recv_buffers[sender_mac] = remainder
-                payload_str = payload_bytes.decode('utf-8')
-                print(f" Received packet from {sender_mac}: {payload_str}")
+                    recv_buffers[sender_mac] = remainder
+                    payload_str = payload_bytes.decode('utf-8', 'ignore')
+                    print(f" Received packet from {sender_mac}: {payload_str}")
 
-                packet = parse_packet(payload_str)
-                msg_type = packet.get("msg_type")
-                target = packet.get("target")
+                    packet = parse_packet(payload_str)
+                    msg_type = packet.get("msg_type")
+                    target = packet.get("target")
 
-                is_for_us = False
-                if target:
-                    t_lower = target.lower()
-                    is_for_us = (t_lower == local_id or t_lower in ("broadcast", "ff:ff:ff:ff:ff:ff"))
-                else:
-                    is_for_us = (msg_type == "CMD" or msg_type == "ACK" or msg_type == "COMMAND")
+                    is_for_us = False
+                    if target:
+                        t_lower = target.lower()
+                        is_for_us = (t_lower == local_id or t_lower in ("broadcast", "ff:ff:ff:ff:ff:ff"))
+                    else:
+                        is_for_us = (msg_type == "CMD" or msg_type == "ACK" or msg_type == "COMMAND")
 
-                # Handle BEACON packets
-                if msg_type == "BEACON":
-                    b_pld = packet.get("data") or packet.get("pld", {})
-                    hub_mac = b_pld.get("hub_mac", sender_mac)
-                    parent_mac = b_pld.get("sender_mac", sender_mac)
-                    b_ch = b_pld.get("channel")
+                    # Handle BEACON packets
+                    if msg_type == "BEACON":
+                        b_pld = packet.get("data") or packet.get("pld", {})
+                        hub_mac = b_pld.get("hub_mac", sender_mac)
+                        parent_mac = b_pld.get("sender_mac", sender_mac)
+                        b_ch = b_pld.get("channel")
 
+                        current_cfg = config.load_config()
+                        paired_hub = current_cfg.get("hub", {}).get("mac", "")
+                        is_our_hub = (hub_mac.lower().replace(':', '') == paired_hub.lower().replace(':', ''))
+
+                        if not _paired or (is_our_hub and b_ch and current_cfg.get("wifi", {}).get("channel") != b_ch):
+                            print(f" Received BEACON from {'paired ' if _paired else ''}Hub {hub_mac} (Channel: {b_ch})")
+                            _last_hub_rx_time = time.time()
+                            try:
+                                upd = {"hub": {"mac": hub_mac}, "parent": {"mac": parent_mac}}
+                                if b_ch:
+                                    upd["wifi"] = {"channel": b_ch}
+                                    set_wifi_channel(b_ch)
+                                config.update_config(upd)
+                            except Exception as b_ex:
+                                print("Error handling BEACON:", b_ex)
+
+                    if msg_type == "ACK" and is_for_us:
+                        ack_pld = packet.get("data") or packet.get("pld", {})
+                        if ack_pld.get("status") == "paired":
+                            _paired = True
+                            _last_hub_rx_time = time.time()
+                            hub_mac = ack_pld.get("hub_mac", sender_mac)
+                            hub_ch = ack_pld.get("channel")
+                            print(f"Client paired successfully with Hub ({hub_mac}) on Channel {hub_ch}!")
+                            try:
+                                upd = {"hub": {"mac": hub_mac}, "parent": {"mac": hub_mac}}
+                                if hub_ch:
+                                    upd["wifi"] = {"channel": hub_ch}
+                                    set_wifi_channel(hub_ch)
+                                config.update_config(upd)
+                            except Exception as ex:
+                                print("Error updating config on pairing:", ex)
+
+                    # Relaying and target validation
+                    is_actually_for_us = relay_engine.process_and_relay(packet)
+
+                    # Update RX timestamp if packet is from Hub
                     current_cfg = config.load_config()
                     paired_hub = current_cfg.get("hub", {}).get("mac", "")
-                    is_our_hub = (hub_mac.lower().replace(':', '') == paired_hub.lower().replace(':', ''))
-
-                    if not _paired or (is_our_hub and b_ch and current_cfg.get("wifi", {}).get("channel") != b_ch):
-                        print(f" Received BEACON from {'paired ' if _paired else ''}Hub {hub_mac} (Channel: {b_ch})")
+                    if sender_mac.lower().replace(':', '') == paired_hub.lower().replace(':', ''):
                         _last_hub_rx_time = time.time()
-                        try:
-                            upd = {"hub": {"mac": hub_mac}, "parent": {"mac": parent_mac}}
-                            if b_ch:
-                                upd["wifi"] = {"channel": b_ch}
-                                set_wifi_channel(b_ch)
-                            config.update_config(upd)
-                        except Exception as b_ex:
-                            print("Error handling BEACON:", b_ex)
 
-                if msg_type == "ACK" and is_for_us:
-                    ack_pld = packet.get("data") or packet.get("pld", {})
-                    if ack_pld.get("status") == "paired":
-                        _paired = True
-                        _last_hub_rx_time = time.time()
-                        hub_mac = ack_pld.get("hub_mac", sender_mac)
-                        hub_ch = ack_pld.get("channel")
-                        print(f"Client paired successfully with Hub ({hub_mac}) on Channel {hub_ch}!")
-                        try:
-                            upd = {"hub": {"mac": hub_mac}, "parent": {"mac": hub_mac}}
-                            if hub_ch:
-                                upd["wifi"] = {"channel": hub_ch}
-                                set_wifi_channel(hub_ch)
-                            config.update_config(upd)
-                        except Exception as ex:
-                            print("Error updating config on pairing:", ex)
+                    if is_actually_for_us and (msg_type == "COMMAND" or msg_type == "CMD") and on_cmd_received_fn is not None:
+                        payload = packet.get("data") or packet.get("pld", {})
+                        cmd = payload.get("cmd") or payload.get("command")
 
-                # Relaying and target validation
-                is_actually_for_us = relay_engine.process_and_relay(packet)
+                        payload["sender_mac"] = sender_mac
+                        payload["routing_path"] = packet.get("hops", [])
 
-                # Update RX timestamp if packet is from Hub
-                current_cfg = config.load_config()
-                paired_hub = current_cfg.get("hub", {}).get("mac", "")
-                if sender_mac.lower().replace(':', '') == paired_hub.lower().replace(':', ''):
-                    _last_hub_rx_time = time.time()
-
-                if is_actually_for_us and (msg_type == "COMMAND" or msg_type == "CMD") and on_cmd_received_fn is not None:
-                    payload = packet.get("data") or packet.get("pld", {})
-                    cmd = payload.get("cmd") or payload.get("command")
-
-                    payload["sender_mac"] = sender_mac
-                    payload["routing_path"] = packet.get("hops", [])
-
-                    on_cmd_received_fn(cmd, payload)
+                        on_cmd_received_fn(cmd, payload)
             else:
                 if not _paired:
                     send_pairing_request()

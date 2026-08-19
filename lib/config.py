@@ -83,3 +83,7 @@ def get_unix_time():
     if t > 1000000:
         return t + 946684800
     return t
+
+def make_frame(body):
+    payload = body.encode('utf-8')
+    return len(payload).to_bytes(2, 'big') + payload

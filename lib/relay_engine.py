@@ -146,7 +146,7 @@ def process_and_relay(packet):
         try:
             add_peer_safe(_e, next_hop_bytes)
             payload_str = ujson.dumps(packet["raw"])
-            _e.send(next_hop_bytes, payload_str.encode('utf-8'))
+            _e.send(next_hop_bytes, config.make_frame(payload_str))
             print(" Packet relayed successfully.")
         except Exception as e:
             print(f" Failed to relay packet to next hop: {e}")
