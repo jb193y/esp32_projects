@@ -5,7 +5,8 @@ import machine
 import time
 
 print(">>> HUB boot.py STARTED <<<")
-time.sleep(1) # delay for serial connection stabilizer
+print(" Safe boot delay... press Ctrl-C to enter REPL")
+time.sleep(4) # delay for serial connection stabilizer and thread prevention
 
 # Hardware and environment diagnostics
 print(" Platform:", sys.platform)

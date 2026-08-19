@@ -5,7 +5,8 @@ import machine
 import time
 
 print(">>> VALVE boot.py STARTED <<<")
-time.sleep(1) # delay for serial connection stabilizer
+print(" Safe boot delay... press Ctrl-C to enter REPL")
+time.sleep(4) # delay for serial connection stabilizer and thread prevention
 
 print(" Platform:", sys.platform)
 print(" CPU Frequency:", machine.freq() // 1000000, "MHz")
