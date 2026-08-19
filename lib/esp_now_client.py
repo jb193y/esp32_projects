@@ -188,7 +188,7 @@ def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
         try:
             res = _e.send(next_hop_bytes, config.make_frame(payload_str))
             print(f" Envelope sent to next hop {phys_mac} for destination {target_id} (res={res})")
-            print(config.make_frame(payload_str))
+            print(repr(config.make_frame(payload_str)))
             print()
             return res
         except Exception as send_err:
