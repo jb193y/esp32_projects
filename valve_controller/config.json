@@ -1,7 +1,7 @@
 {
   "client": {
-    "id": "valve_node_02",
-    "custom_name": "Valve Node 02",
+    "id": "valve_node_24",
+    "custom_name": "COM24",
     "type": "valve",
     "controller_type": "YD-ESP32-S3 2022-V1.3",
     "board_type": "YD-ESP32-S3 2022-V1.3",
