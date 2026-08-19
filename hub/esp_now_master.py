@@ -18,6 +18,18 @@ recv_buffers = {}
 recv_last_seen = {}
 MAX_RX_BUFFER = 2048
 
+registered_peers = []
+tx_queue = config.Queue()
+rx_queue = config.Queue()
+
+def reregister_peers(e):
+    print(f" Re-registering {len(registered_peers)} peers...")
+    for mac_str in registered_peers:
+        try:
+            e.add_peer(mac_to_bytes(mac_str))
+        except OSError:
+            pass
+
 def extract_complete_frame(buf):
     """Return (frame_bytes, remainder) if a full frame is available, otherwise (None, buf)."""
     if len(buf) < 2:
@@ -64,6 +76,9 @@ def save_node(mac_str, node_type, node_id=None, name=None):
 def add_peer_safe(e, peer_bytes, channel=0):
     """Add/update an ESP-NOW peer. add_peer is idempotent."""
     peer_bytes = bytes(peer_bytes)
+    mac_str = bytes_to_mac(peer_bytes)
+    if mac_str not in registered_peers:
+        registered_peers.append(mac_str)
     try:
         e.add_peer(peer_bytes, b'', channel, network.STA_IF)
     except OSError as ose:
@@ -133,21 +148,12 @@ def send_espnow_msg(target_mac_str, msg_dict, routing_path=None, target_id=None)
     next_hop_bytes = mac_to_bytes(phys_mac)
 
     try:
-        if phys_mac != "ff:ff:ff:ff:ff:ff":
-            add_peer_safe(_e, next_hop_bytes)
         payload_str = ujson.dumps(envelope)
-        try:
-            _e.send(next_hop_bytes, config.make_frame(payload_str))
-            if phys_mac == "ff:ff:ff:ff:ff:ff":
-                print(" ESP-NOW broadcasted message")
-            else:
-                print(f" ESP-NOW unicasted message to {phys_mac}")
-            return True
-        except Exception as send_err:
-            print(" ESP-NOW send notice:", send_err)
-            return False
+        frame_bytes = config.make_frame(payload_str)
+        tx_queue.put((next_hop_bytes, frame_bytes, phys_mac, target_id or target_mac_str))
+        return True
     except Exception as e:
-        print(" Failed to send ESP-NOW packet:", e)
+        print(" Failed to enqueue ESP-NOW packet:", e)
         return False
 
 _discovery_active_until = 0
@@ -305,6 +311,274 @@ def dispatch_command_from_mqtt(target_node, command, routing_path, args):
             "payload": payload
         }, mac_routing_path, target_id=target_node)
 
+def hub_tx_loop():
+    global _e
+    print(" ESP-NOW Master TX Loop Thread Started")
+    while True:
+        try:
+            item = tx_queue.get()
+            if item is None:
+                time.sleep_ms(50)  # Yield CPU
+                continue
+                
+            next_hop_bytes, payload_bytes, phys_mac, target_id = item
+            
+            if _e is None:
+                time.sleep_ms(100)
+                tx_queue.put(item)
+                continue
+                
+            try:
+                if phys_mac != "ff:ff:ff:ff:ff:ff":
+                    add_peer_safe(_e, next_hop_bytes)
+                res = _e.send(next_hop_bytes, payload_bytes)
+                if phys_mac == "ff:ff:ff:ff:ff:ff":
+                    print(" ESP-NOW broadcasted message")
+                else:
+                    print(f" ESP-NOW unicasted message to {phys_mac}")
+            except Exception as send_err:
+                print(" [Hub TX Queue] ESP-NOW send error:", send_err)
+                if "buffer error" in str(send_err):
+                    try:
+                        _e.active(False)
+                    except:
+                        pass
+                    time.sleep_ms(50)
+                    try:
+                        _e = espnow.ESPNow()
+                        _e.active(True)
+                        _e.config(rxbuf=4096)
+                        reregister_peers(_e)
+                    except:
+                        pass
+            
+            time.sleep_ms(50)
+            
+        except Exception as loop_err:
+            print(" [Hub TX Queue] Error in tx loop:", loop_err)
+            time.sleep_ms(100)
+
+def hub_rx_processor_loop():
+    print(" ESP-NOW Master RX Processor Loop Thread Started")
+    # Cache station MAC on startup
+    sta = network.WLAN(network.STA_IF)
+    hub_sta_mac = bytes_to_mac(sta.config('mac'))
+    try:
+        ap = network.WLAN(network.AP_IF)
+        hub_ap_mac = bytes_to_mac(ap.config('mac'))
+    except Exception:
+        hub_ap_mac = hub_sta_mac
+
+    while True:
+        try:
+            item = rx_queue.get()
+            if item is None:
+                time.sleep_ms(50)  # Yield CPU
+                continue
+                
+            sender_mac_str, payload_bytes = item
+            payload_str = payload_bytes.decode('utf-8', 'ignore')
+            
+            try:
+                packet = parse_packet(payload_str)
+            except Exception as parse_err:
+                print(f"  Ignoring invalid ESP-NOW packet frame from {sender_mac_str}: {parse_err}")
+                continue
+
+            msg_type = packet.get("msg_type")
+            target = packet.get("target", "")
+            source = packet.get("source")
+            data = packet.get("data", {})
+
+            cfg = config.load_config()
+            client_id = cfg.get("client", {}).get("id", "hub_master_01")
+
+            is_broadcast = target in ("00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff", "FF:FF:FF:FF:FF:FF", "broadcast")
+            is_for_us = is_broadcast or (target and target.lower() in (client_id.lower(), "hub_master_01")) or (target and target.upper() in (hub_sta_mac.upper(), hub_ap_mac.upper()))
+
+            if not is_for_us:
+                continue
+
+            if msg_type == "PAIR_REQ" or (msg_type == "STATUS" and data.get("status") == "pairing_request"):
+                node_type = data.get("node_type", "UNKNOWN")
+                node_id = source or data.get("node_id") or data.get("custom_name", "")
+                custom_name = data.get("custom_name")
+                print(f"PAIR_REQ from {sender_mac_str} ({node_type}/{node_id})")
+
+                node_info = save_node(sender_mac_str, node_type, node_id=node_id, name=custom_name)
+
+                active_ch = 6
+                try:
+                    active_ch = sta.config('channel')
+                except Exception:
+                    pass
+
+                send_espnow_msg(sender_mac_str, {
+                    "msg_type": "ACK",
+                    "payload": {"status": "paired", "hub_mac": hub_sta_mac, "channel": active_ch}
+                }, target_id=node_id)
+
+                type_slug = node_type.lower()
+                device_id = node_info.get("node_id", "").lower() or sender_mac_str.replace(':', '')
+
+                site = cfg.get("client", {}).get("site", "default_site")
+                group = cfg.get("client", {}).get("group", "all")
+
+                if site == "default_site":
+                    continue
+
+                status_payload = {
+                    "source": device_id,
+                    "target": "backend_api",
+                    "msg_type": "STATUS",
+                    "timestamp": config.get_unix_time(),
+                    "route": {
+                        "transport": "ESPNOW",
+                        "route_id": packet.get("route", {}).get("route_id", "direct"),
+                        "current_hop_index": packet.get("current_hop_index", 0),
+                        "hops": packet.get("hops", []),
+                        "link_diagnostics": []
+                    },
+                    "data": {
+                        "device_id": device_id,
+                        "status": "online",
+                        "node_type": node_type,
+                        "mac": sender_mac_str
+                    }
+                }
+                mqtt_client.publish_msg(f"{site}/{group}/{type_slug}/{device_id}/status", status_payload, retain=True)
+
+                new_node_payload = {
+                    "source": "hub_master_01",
+                    "target": "backend_api",
+                    "msg_type": "STATUS",
+                    "timestamp": config.get_unix_time(),
+                    "route": {
+                        "transport": "MQTT",
+                        "route_id": "hub_discovery_notice",
+                        "current_hop_index": 0,
+                        "hops": ["backend_api"],
+                        "link_diagnostics": []
+                    },
+                    "data": {
+                        "mac": sender_mac_str,
+                        "device_type": node_type,
+                        "device_id": device_id,
+                        "custom_name": node_info["custom_name"]
+                    }
+                }
+                mqtt_client.publish_msg("farm/config/new_node_added", new_node_payload)
+
+            elif msg_type in ("TELE", "TELEMETRY"):
+                site = cfg.get("client", {}).get("site", "default_site")
+                group = cfg.get("client", {}).get("group", "all")
+                if site == "default_site":
+                    continue
+
+                nodes = load_nodes()
+                node_info = nodes.get(sender_mac_str, {})
+                node_type = node_info.get("node_type", "node").lower()
+                device_id = node_info.get("node_id", sender_mac_str.replace(':', '')).lower()
+
+                tele_topic = f"{site}/{group}/{node_type}/{device_id}/telemetry"
+                tele_payload = data.copy() if isinstance(data, dict) else {"data": data}
+                tele_payload["device_id"] = device_id
+                tele_payload["node_mac"] = sender_mac_str
+
+                mqtt_payload = {
+                    "source": source or device_id,
+                    "target": "hub_master_01",
+                    "msg_type": "TELEMETRY",
+                    "timestamp": packet.get("raw", {}).get("timestamp", int(config.get_unix_time())),
+                    "route": {
+                        "transport": "ESPNOW",
+                        "route_id": packet.get("route", {}).get("route_id", "direct"),
+                        "current_hop_index": packet.get("current_hop_index", 0),
+                        "hops": packet.get("hops", []),
+                        "link_diagnostics": []
+                    },
+                    "data": tele_payload
+                }
+                mqtt_client.publish_msg(tele_topic, mqtt_payload)
+
+            elif msg_type == "ACK":
+                site = cfg.get("client", {}).get("site", "default_site")
+                group = cfg.get("client", {}).get("group", "all")
+                if site == "default_site":
+                    continue
+
+                nodes = load_nodes()
+                node_info = nodes.get(sender_mac_str, {})
+                node_type = node_info.get("node_type", "node").lower()
+                device_id = node_info.get("node_id", sender_mac_str.replace(':', '')).lower()
+
+                exec_payload = {
+                    "status": "EXECUTED_BY_NODE",
+                    "device_id": device_id,
+                    "node_mac": sender_mac_str,
+                    "ack_data": data,
+                    "timestamp": config.get_unix_time()
+                }
+
+                mqtt_payload = {
+                    "source": source or device_id,
+                    "target": "hub_master_01",
+                    "msg_type": "ACK",
+                    "timestamp": packet.get("raw", {}).get("timestamp", int(config.get_unix_time())),
+                    "route": {
+                        "transport": "ESPNOW",
+                        "route_id": packet.get("route", {}).get("route_id", "direct"),
+                        "current_hop_index": packet.get("current_hop_index", 0),
+                        "hops": packet.get("hops", []),
+                        "link_diagnostics": []
+                    },
+                    "data": exec_payload
+                }
+                mqtt_client.publish_msg(f"{site}/{group}/{node_type}/{device_id}/command/response", mqtt_payload)
+                mqtt_client.publish_msg(f"{site}/{group}/{node_type}/{device_id}/acks", mqtt_payload)
+                mqtt_client.publish_msg(f"farm/{client_id}/command_response", mqtt_payload)
+
+            elif msg_type in ("ALERT", "ALERTS"):
+                site = cfg.get("client", {}).get("site", "default_site")
+                group = cfg.get("client", {}).get("group", "all")
+                if site == "default_site":
+                    continue
+
+                nodes = load_nodes()
+                node_info = nodes.get(sender_mac_str, {})
+                node_type = node_info.get("node_type", "node").lower()
+                device_id = node_info.get("node_id", sender_mac_str.replace(':', '')).lower()
+
+                alert_topic = f"{site}/{group}/{node_type}/{device_id}/alerts"
+                alert_payload = data.copy() if isinstance(data, dict) else {"data": data}
+                alert_payload["device_id"] = device_id
+                alert_payload["device_type"] = node_type.upper()
+                alert_payload["node_mac"] = sender_mac_str
+
+                mqtt_payload = {
+                    "source": source or device_id,
+                    "target": "hub_master_01",
+                    "msg_type": "ALERT",
+                    "timestamp": packet.get("raw", {}).get("timestamp", int(config.get_unix_time())),
+                    "route": {
+                        "transport": "ESPNOW",
+                        "route_id": packet.get("route", {}).get("route_id", "direct"),
+                        "current_hop_index": packet.get("current_hop_index", 0),
+                        "hops": packet.get("hops", []),
+                        "link_diagnostics": []
+                    },
+                    "data": alert_payload
+                }
+                mqtt_client.publish_msg(alert_topic, mqtt_payload)
+
+            # Explicitly yield and collect garbage after processing each packet
+            gc.collect()
+            time.sleep_ms(10)
+
+        except Exception as loop_err:
+            print(" [Hub RX Processor] Error in loop:", loop_err)
+            time.sleep_ms(100)
+
 def espnow_test_receiver_thread(heartbeats=None):
     """Minimal raw ESP-NOW receiver for transport-only testing."""
     global _e
@@ -352,11 +626,15 @@ def espnow_test_receiver_thread(heartbeats=None):
             print(f" ESP-NOW Test peer: {test_peer}")
         except Exception as peer_err:
             print(f" ESP-NOW Test peer notice: {peer_err}")
+        reregister_peers(_e)
 
     init_test_espnow()
 
+    # Spawn Hub TX Loop Thread for Test Mode
+    import _thread
+    _thread.start_new_thread(hub_tx_loop, ())
+
     print(" ESP-NOW Test Receiver Listening")
-    last_test_packet = None
     test_peers = {}
     command_sequence = 0
     test_cfg = config.load_config().get("client", {})
@@ -390,11 +668,10 @@ def espnow_test_receiver_thread(heartbeats=None):
                         }
                     }
                     command_bytes = mac_to_bytes(peer_mac)
-                    result = _e.send(command_bytes, config.make_frame(ujson.dumps(command_packet)))
-                    print(f" ESP-NOW TEST CMD to {peer_mac} ({peer_info['id']}): {command}, res={result}")
-                    print(f" ESP-NOW TEST CMD PACKET: {config.make_frame(ujson.dumps(command_packet))!r}")
-                    print()
+                    tx_queue.put((command_bytes, config.make_frame(ujson.dumps(command_packet)), peer_mac, peer_info["id"]))
+                    print(f" [Test] Enqueued CMD to {peer_mac} ({peer_info['id']}): {command}")
                     next_command_at = time.time() + random.randint(command_min_sec, command_max_sec)
+                time.sleep_ms(10)
                 continue
 
             sender = bytes_to_mac(host)
@@ -462,23 +739,13 @@ def espnow_test_receiver_thread(heartbeats=None):
                         "pld": reply_data
                     }
 
-                    time.sleep_ms(500)
                     reply_peer = mac_to_bytes(sender)
-                    result = _e.send(reply_peer, config.make_frame(ujson.dumps(reply)))
-                    print(f" ESP-NOW TEST TX to {sender}, type=ACK, res={result}")
-                    print(f" ESP-NOW TEST REPLY: {config.make_frame(ujson.dumps(reply))!r}")
-                    print()
-
-                    # Recreate ESP-NOW object to prevent buffer-error state
-                    try:
-                        _e.active(False)
-                    except Exception:
-                        pass
-                    time.sleep_ms(100)
-                    init_test_espnow()
+                    tx_queue.put((reply_peer, config.make_frame(ujson.dumps(reply)), sender, logical_sender))
+                    print(f" [Test] Enqueued reply ACK to {sender}")
 
                 except Exception as reply_err:
                     print(f" ESP-NOW Test reply error: {reply_err}")
+
         except Exception as recv_err:
             err_str = str(recv_err)
             if "buffer error" in err_str:
@@ -496,8 +763,6 @@ def espnow_receiver_thread(heartbeats=None):
     global _e
     print(" ESP-NOW Master Receiver Thread Started")
 
-    # Keep Wi-Fi in STA mode for WAN connectivity and avoid reconfiguring
-    # the radio path while ESP-NOW traffic is being processed.
     sta = network.WLAN(network.STA_IF)
     try:
         sta.active(True)
@@ -514,7 +779,6 @@ def espnow_receiver_thread(heartbeats=None):
     except:
         pass
 
-    # In ESP-NOW-only mode, no WAN thread sets the radio channel for us.
     try:
         cfg = config.load_config()
         if cfg.get("client", {}).get("espnow_only", False):
@@ -522,8 +786,6 @@ def espnow_receiver_thread(heartbeats=None):
             try:
                 sta.config(channel=active_ch)
             except Exception:
-                # Some firmware builds reject channel changes while the STA
-                # state is connected. Disconnect before retrying the change.
                 try:
                     sta.disconnect()
                 except Exception:
@@ -533,12 +795,24 @@ def espnow_receiver_thread(heartbeats=None):
     except Exception as ch_err:
         print(f" ESP-NOW-only channel notice: {ch_err}")
 
-    _e = espnow.ESPNow()
-    _e.active(True)
-    try:
-        _e.config(rxbuf=4096)
-    except Exception as ex:
-        print("rxbuf config notice:", ex)
+    def init_real_espnow():
+        global _e
+        _e = espnow.ESPNow()
+        _e.active(True)
+        try:
+            _e.config(rxbuf=4096)
+        except Exception as ex:
+            print("rxbuf config notice:", ex)
+        reregister_peers(_e)
+
+    init_real_espnow()
+    
+    # Spawn Hub Queues and Processors
+    import _thread
+    _thread.start_new_thread(hub_tx_loop, ())
+    _thread.start_new_thread(hub_rx_processor_loop, ())
+    
+    print(" ESP-NOW Master Receiver active and listening")
 
     _last_beacon_time = 0
     was_discovery_active = False
@@ -547,7 +821,6 @@ def espnow_receiver_thread(heartbeats=None):
         if heartbeats is not None:
             heartbeats["esp_now"] = time.time()
 
-        # Handle mesh discovery beaconing
         now = config.get_unix_time()
         if now < _discovery_active_until:
             if not was_discovery_active:
@@ -579,7 +852,10 @@ def espnow_receiver_thread(heartbeats=None):
                 }
                 try:
                     add_peer_safe(_e, b'\xff\xff\xff\xff\xff\xff')
-                    _e.send(b'\xff\xff\xff\xff\xff\xff', config.make_frame(ujson.dumps(beacon_pkt)))
+                    send_espnow_msg("ff:ff:ff:ff:ff:ff", {
+                        "msg_type": "BEACON",
+                        "payload": beacon_pkt["pld"]
+                    })
                 except Exception as b_err:
                     print(" Beacon send notice:", b_err)
         else:
@@ -594,12 +870,11 @@ def espnow_receiver_thread(heartbeats=None):
         try:
             host, msg = _e.recv(5000)
             if not host or not msg:
-                time.sleep_ms(5) # Yield to other threads like MQTT
+                time.sleep_ms(5)
                 continue
 
             sender_mac_str = bytes_to_mac(host)
             
-            # Stale buffer cleanup: if last packet was > 10s ago, clear buffer
             if now - recv_last_seen.get(sender_mac_str, now) > 10:
                 recv_buffers[sender_mac_str] = b""
             recv_last_seen[sender_mac_str] = now
@@ -608,12 +883,11 @@ def espnow_receiver_thread(heartbeats=None):
                 recv_buffers[sender_mac_str] = b""
             recv_buffers[sender_mac_str] += bytes(msg)
 
-            # Proactively add any sender as a peer to ensure reliable unicast reception.
             cfg = config.load_config()
             if not cfg.get("client", {}).get("espnow_broadcast_only", False):
                 add_peer_safe(_e, host)
             
-            gc.collect() # Ensure memory is clean before processing
+            gc.collect()
 
             while True:
                 payload_bytes, remainder = extract_complete_frame(recv_buffers[sender_mac_str])
@@ -623,208 +897,7 @@ def espnow_receiver_thread(heartbeats=None):
                     break
 
                 recv_buffers[sender_mac_str] = remainder
-                payload_str = payload_bytes.decode('utf-8', 'ignore')
-                print(f" Received packet from {sender_mac_str}: {payload_str}")
-
-                try:
-                    packet = parse_packet(payload_str)
-                except Exception as parse_err:
-                    print(f"  Ignoring invalid ESP-NOW packet frame from {sender_mac_str}: {parse_err}")
-                    continue
-
-                msg_type = packet.get("msg_type")
-                target = packet.get("target", "")
-                source = packet.get("source")
-                data = packet.get("data", {})
-
-                if packet:
-                    cfg = config.load_config()
-                    client_id = cfg.get("client", {}).get("id", "hub_master_01")
-                    hub_sta_mac = bytes_to_mac(sta.config('mac'))
-
-                    try:
-                        ap = network.WLAN(network.AP_IF)
-                        hub_ap_mac = bytes_to_mac(ap.config('mac'))
-                    except Exception:
-                        hub_ap_mac = hub_sta_mac
-
-                    is_broadcast = target in ("00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff", "FF:FF:FF:FF:FF:FF", "broadcast")
-                    is_for_us = is_broadcast or (target and target.lower() in (client_id.lower(), "hub_master_01")) or (target and target.upper() in (hub_sta_mac.upper(), hub_ap_mac.upper()))
-
-                    if not is_for_us:
-                        continue
-
-                    if msg_type == "PAIR_REQ" or (msg_type == "STATUS" and data.get("status") == "pairing_request"):
-                        node_type = data.get("node_type", "UNKNOWN")
-                        node_id = source or data.get("node_id") or data.get("custom_name", "")
-                        custom_name = data.get("custom_name")
-                        print(f"PAIR_REQ from {sender_mac_str} ({node_type}/{node_id})")
-
-                        node_info = save_node(sender_mac_str, node_type, node_id=node_id, name=custom_name)
-
-                        active_ch = 6
-                        try:
-                            active_ch = sta.config('channel')
-                        except Exception:
-                            pass
-
-                        send_espnow_msg(sender_mac_str, {
-                            "msg_type": "ACK",
-                            "payload": {"status": "paired", "hub_mac": hub_sta_mac, "channel": active_ch}
-                        }, target_id=node_id)
-
-                        type_slug = node_type.lower()
-                        device_id = node_info.get("node_id", "").lower() or sender_mac_str.replace(':', '')
-
-                        site = cfg.get("client", {}).get("site", "default_site")
-                        group = cfg.get("client", {}).get("group", "all")
-
-                        if site == "default_site":
-                            continue
-
-                        status_payload = {
-                            "source": device_id,
-                            "target": "backend_api",
-                            "msg_type": "STATUS",
-                            "timestamp": config.get_unix_time(),
-                            "route": {
-                                "transport": "ESPNOW",
-                                "route_id": packet.get("route", {}).get("route_id", "direct"),
-                                "current_hop_index": packet.get("current_hop_index", 0),
-                                "hops": packet.get("hops", []),
-                                "link_diagnostics": []
-                            },
-                            "data": {
-                                "device_id": device_id,
-                                "status": "online",
-                                "node_type": node_type,
-                                "mac": sender_mac_str
-                            }
-                        }
-                        mqtt_client.publish_msg(f"{site}/{group}/{type_slug}/{device_id}/status", status_payload, retain=True)
-
-                        new_node_payload = {
-                            "source": "hub_master_01",
-                            "target": "backend_api",
-                            "msg_type": "STATUS",
-                            "timestamp": config.get_unix_time(),
-                            "route": {
-                                "transport": "MQTT",
-                                "route_id": "hub_discovery_notice",
-                                "current_hop_index": 0,
-                                "hops": ["backend_api"],
-                                "link_diagnostics": []
-                            },
-                            "data": {
-                                "mac": sender_mac_str,
-                                "device_type": node_type,
-                                "device_id": device_id,
-                                "custom_name": node_info["custom_name"]
-                            }
-                        }
-                        mqtt_client.publish_msg("farm/config/new_node_added", new_node_payload)
-
-                    elif msg_type in ("TELE", "TELEMETRY"):
-                        site = cfg.get("client", {}).get("site", "default_site")
-                        group = cfg.get("client", {}).get("group", "all")
-                        if site == "default_site":
-                            continue
-
-                        nodes = load_nodes()
-                        node_info = nodes.get(sender_mac_str, {})
-                        node_type = node_info.get("node_type", "node").lower()
-                        device_id = node_info.get("node_id", sender_mac_str.replace(':', '')).lower()
-
-                        tele_topic = f"{site}/{group}/{node_type}/{device_id}/telemetry"
-                        tele_payload = data.copy() if isinstance(data, dict) else {"data": data}
-                        tele_payload["device_id"] = device_id
-                        tele_payload["node_mac"] = sender_mac_str
-
-                        mqtt_payload = {
-                            "source": source or device_id,
-                            "target": "hub_master_01",
-                            "msg_type": "TELEMETRY",
-                            "timestamp": packet.get("raw", {}).get("timestamp", int(config.get_unix_time())),
-                            "route": {
-                                "transport": "ESPNOW",
-                                "route_id": packet.get("route", {}).get("route_id", "direct"),
-                                "current_hop_index": packet.get("current_hop_index", 0),
-                                "hops": packet.get("hops", []),
-                                "link_diagnostics": []
-                            },
-                            "data": tele_payload
-                        }
-                        mqtt_client.publish_msg(tele_topic, mqtt_payload)
-
-                    elif msg_type == "ACK":
-                        site = cfg.get("client", {}).get("site", "default_site")
-                        group = cfg.get("client", {}).get("group", "all")
-                        if site == "default_site":
-                            continue
-
-                        nodes = load_nodes()
-                        node_info = nodes.get(sender_mac_str, {})
-                        node_type = node_info.get("node_type", "node").lower()
-                        device_id = node_info.get("node_id", sender_mac_str.replace(':', '')).lower()
-
-                        exec_payload = {
-                            "status": "EXECUTED_BY_NODE",
-                            "device_id": device_id,
-                            "node_mac": sender_mac_str,
-                            "ack_data": data,
-                            "timestamp": config.get_unix_time()
-                        }
-
-                        mqtt_payload = {
-                            "source": source or device_id,
-                            "target": "hub_master_01",
-                            "msg_type": "ACK",
-                            "timestamp": packet.get("raw", {}).get("timestamp", int(config.get_unix_time())),
-                            "route": {
-                                "transport": "ESPNOW",
-                                "route_id": packet.get("route", {}).get("route_id", "direct"),
-                                "current_hop_index": packet.get("current_hop_index", 0),
-                                "hops": packet.get("hops", []),
-                                "link_diagnostics": []
-                            },
-                            "data": exec_payload
-                        }
-                        mqtt_client.publish_msg(f"{site}/{group}/{node_type}/{device_id}/command/response", mqtt_payload)
-                        mqtt_client.publish_msg(f"{site}/{group}/{node_type}/{device_id}/acks", mqtt_payload)
-                        mqtt_client.publish_msg(f"farm/{client_id}/command_response", mqtt_payload)
-
-                    elif msg_type in ("ALERT", "ALERTS"):
-                        site = cfg.get("client", {}).get("site", "default_site")
-                        group = cfg.get("client", {}).get("group", "all")
-                        if site == "default_site":
-                            continue
-
-                        nodes = load_nodes()
-                        node_info = nodes.get(sender_mac_str, {})
-                        node_type = node_info.get("node_type", "node").lower()
-                        device_id = node_info.get("node_id", sender_mac_str.replace(':', '')).lower()
-
-                        alert_topic = f"{site}/{group}/{node_type}/{device_id}/alerts"
-                        alert_payload = data.copy() if isinstance(data, dict) else {"data": data}
-                        alert_payload["device_id"] = device_id
-                        alert_payload["device_type"] = node_type.upper()
-                        alert_payload["node_mac"] = sender_mac_str
-
-                        mqtt_payload = {
-                            "source": source or device_id,
-                            "target": "hub_master_01",
-                            "msg_type": "ALERT",
-                            "timestamp": packet.get("raw", {}).get("timestamp", int(config.get_unix_time())),
-                            "route": {
-                                "transport": "ESPNOW",
-                                "route_id": packet.get("route", {}).get("route_id", "direct"),
-                                "current_hop_index": packet.get("current_hop_index", 0),
-                                "hops": packet.get("hops", []),
-                                "link_diagnostics": []
-                            },
-                            "data": alert_payload
-                        }
-                        mqtt_client.publish_msg(alert_topic, mqtt_payload)
+                rx_queue.put((sender_mac_str, payload_bytes))
 
         except Exception as e:
             err_str = str(e)
@@ -835,9 +908,7 @@ def espnow_receiver_thread(heartbeats=None):
                     pass
                 time.sleep_ms(50)
                 try:
-                    _e = espnow.ESPNow()
-                    _e.active(True)
-                    _e.config(rxbuf=4096)
+                    init_real_espnow()
                 except:
                     pass
             else:

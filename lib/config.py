@@ -87,3 +87,39 @@ def get_unix_time():
 def make_frame(body):
     payload = body.encode('utf-8')
     return len(payload).to_bytes(2, 'big') + payload
+
+class Queue:
+    def __init__(self):
+        import _thread
+        self._queue = []
+        self._lock = _thread.allocate_lock()
+    
+    def put(self, item):
+        self._lock.acquire()
+        try:
+            self._queue.append(item)
+        finally:
+            self._lock.release()
+    
+    def get(self):
+        self._lock.acquire()
+        try:
+            if self._queue:
+                return self._queue.pop(0)
+            return None
+        finally:
+            self._lock.release()
+            
+    def empty(self):
+        self._lock.acquire()
+        try:
+            return len(self._queue) == 0
+        finally:
+            self._lock.release()
+
+    def qsize(self):
+        self._lock.acquire()
+        try:
+            return len(self._queue)
+        finally:
+            self._lock.release()

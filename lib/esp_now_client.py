@@ -33,6 +33,52 @@ _last_pairing_tx_time = 0
 _stop_requested = False
 MAX_RX_BUFFER = 2048
 
+tx_queue = config.Queue()
+
+def client_tx_loop():
+    global _e, _stop_requested
+    print(" ESP-NOW Client TX Loop Thread Started")
+    while not _stop_requested:
+        try:
+            item = tx_queue.get()
+            if item is None:
+                time.sleep_ms(50)  # Yield CPU
+                continue
+            
+            next_hop_bytes, payload_bytes, phys_mac, target_id = item
+            
+            if _e is None:
+                time.sleep_ms(100)
+                tx_queue.put(item)
+                continue
+                
+            try:
+                add_peer_safe(_e, next_hop_bytes)
+                res = _e.send(next_hop_bytes, payload_bytes)
+                print(f" [TX Queue] Envelope sent to next hop {phys_mac} for destination {target_id} (res={res})")
+                print(repr(payload_bytes))
+                print()
+            except Exception as send_err:
+                print(" [TX Queue] ESP-NOW send error:", send_err)
+                if "buffer error" in str(send_err):
+                    try:
+                        _e.active(False)
+                    except:
+                        pass
+                    time.sleep_ms(50)
+                    try:
+                        _e.active(True)
+                    except:
+                        pass
+            
+            import gc
+            gc.collect()
+            time.sleep_ms(50)
+            
+        except Exception as loop_err:
+            print(" [TX Queue] Error in tx loop:", loop_err)
+            time.sleep_ms(100)
+
 def mac_to_bytes(mac_str):
     return bytes(int(x, 16) for x in mac_str.split(':'))
 
@@ -182,20 +228,12 @@ def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
     next_hop_bytes = mac_to_bytes(phys_mac)
 
     try:
-        # This firmware requires even the broadcast MAC to be registered.
-        add_peer_safe(_e, next_hop_bytes)
         payload_str = ujson.dumps(envelope)
-        try:
-            res = _e.send(next_hop_bytes, config.make_frame(payload_str))
-            print(f" Envelope sent to next hop {phys_mac} for destination {target_id} (res={res})")
-            print(repr(config.make_frame(payload_str)))
-            print()
-            return res
-        except Exception as send_err:
-            print(f" ESP-NOW send notice to {phys_mac}: {send_err}")
-            return False
+        frame_bytes = config.make_frame(payload_str)
+        tx_queue.put((next_hop_bytes, frame_bytes, phys_mac, target_id))
+        return True
     except Exception as err:
-        print(f" Failed to transmit packet to destination {target_id}:", err)
+        print(f" Failed to enqueue packet to destination {target_id}:", err)
         return False
 
 # Backward compatibility alias for pump controller
@@ -279,7 +317,7 @@ def init_espnow_client(on_cmd_received_fn=None):
     except:
         pass
     
-    relay_engine.init_relay_engine(_e)
+    relay_engine.init_relay_engine(_e, lambda next_hop_bytes, payload_bytes, phys_mac, target_id: tx_queue.put((next_hop_bytes, payload_bytes, phys_mac, target_id)))
     
     send_pairing_request()
     return _e

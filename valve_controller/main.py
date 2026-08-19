@@ -325,8 +325,9 @@ def main():
         # Leave the radio quiet after pairing so the hub can return to recv().
         last_telemetry_time = time.time() + 2
     
-    # Start receiver thread
+    # Start receiver and sender threads
     heartbeats = {"esp_now": time.time()}
+    _thread.start_new_thread(esp_now_client.client_tx_loop, ())
     _thread.start_new_thread(esp_now_client.client_listen_loop, (heartbeats, handle_hub_commands))
     
     print(" Valve Node ready and running loop.")
@@ -356,11 +357,8 @@ def main():
                         "rssi": -50
                     }
                     if random_test:
-                        telemetry["test_seq"] = random.randint(1, 1000000)
+                        telemetry["test_seq"] = random.randint(1, 9999)
                         telemetry["test_value"] = random.randint(0, 100)
-                        telemetry["test_message"] = "VC_RANDOM_{}".format(
-                            random.randint(1000, 9999)
-                        )
                         next_telemetry_delay = random.randint(
                         client_cfg.get("espnow_random_min_sec", 5),
                         client_cfg.get("espnow_random_max_sec", 15)
