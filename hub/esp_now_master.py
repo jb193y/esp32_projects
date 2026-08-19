@@ -84,7 +84,8 @@ def add_peer_safe(e, peer_bytes, channel=0):
         e.add_peer(peer_bytes, b'', channel, network.STA_IF)
     except OSError as ose:
         # Ignore 'ESP-NOW peer already exists' error, which is expected.
-        if ose.args[0] != 23:
+        err = ose.args[0] if ose.args else None
+        if err not in (23, 12293, 12395, -12395) and 'ESP_ERR_ESPNOW_EXIST' not in str(ose):
             print(f"add_peer_safe notice: {ose}")
 
 def parse_packet(payload_str):
