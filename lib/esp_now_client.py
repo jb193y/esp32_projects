@@ -11,6 +11,7 @@ import ujson
 import time
 import config
 import relay_engine
+import message_builder
 
 def set_wifi_channel(ch):
     ap = network.WLAN(network.AP_IF)
@@ -212,16 +213,14 @@ def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
     if is_broadcast:
         hops = ["ff:ff:ff:ff:ff:ff"]
 
-    envelope = {
-        "src": source_id,
-        "dst": target_id,
-        "t": "STATUS" if msg_type == "PAIR_REQ" else msg_type,
-        "ts": int(time.time()),
-        "rt": {
-            "hops": hops
-        },
-        "pld": payload
-    }
+    envelope = message_builder.build_espnow_envelope(
+        source_id,
+        target_id,
+        "STATUS" if msg_type == "PAIR_REQ" else msg_type,
+        payload,
+        route_id=route_id,
+        hops=hops
+    )
 
     # Use unicast next-hop MAC from routing path if available, otherwise fallback to broadcast
     phys_mac = "ff:ff:ff:ff:ff:ff" if broadcast_only else (target_mac or (hops[0] if hops else "ff:ff:ff:ff:ff:ff"))

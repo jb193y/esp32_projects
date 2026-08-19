@@ -10,6 +10,7 @@ import gc
 import config
 import mqtt_client
 import scheduler
+import message_builder
 
 _e = None
 NODES_FILE = "nodes.json"
@@ -131,17 +132,14 @@ def send_espnow_msg(target_mac_str, msg_dict, routing_path=None, target_id=None)
         msg_type = "COMMAND"
     data_payload = msg_dict.get("payload", {})
 
-    envelope = {
-        "src": hub_id,
-        "dst": target_id or target_mac_str,
-        "t": msg_type,
-        "ts": int(config.get_unix_time()),
-        "rt": {
-            "route_id": "to_node",
-            "hops": routing_path
-        },
-        "pld": data_payload
-    }
+    envelope = message_builder.build_espnow_envelope(
+        hub_id,
+        target_id or target_mac_str,
+        msg_type,
+        data_payload,
+        route_id="to_node",
+        hops=routing_path
+    )
 
     # Use the resolved next-hop MAC in the routing path, falling back to broadcast
     phys_mac = "ff:ff:ff:ff:ff:ff" if broadcast_only else ((routing_path[0] if routing_path else target_mac_str) or "ff:ff:ff:ff:ff:ff")
@@ -427,46 +425,38 @@ def hub_rx_processor_loop():
                 if site == "default_site":
                     continue
 
-                status_payload = {
-                    "source": device_id,
-                    "target": "backend_api",
-                    "msg_type": "STATUS",
-                    "timestamp": config.get_unix_time(),
-                    "route": {
-                        "transport": "ESPNOW",
-                        "route_id": packet.get("route", {}).get("route_id", "direct"),
-                        "current_hop_index": packet.get("current_hop_index", 0),
-                        "hops": packet.get("hops", []),
-                        "link_diagnostics": []
-                    },
-                    "data": {
+                status_payload = message_builder.build_mqtt_payload(
+                    source=device_id,
+                    target="backend_api",
+                    msg_type="STATUS",
+                    data={
                         "device_id": device_id,
                         "status": "online",
                         "node_type": node_type,
                         "mac": sender_mac_str
-                    }
-                }
+                    },
+                    route_transport="ESPNOW",
+                    route_id=packet.get("route", {}).get("route_id", "direct"),
+                    current_hop_index=packet.get("current_hop_index", 0),
+                    hops=packet.get("hops", [])
+                )
                 mqtt_client.publish_msg(f"{site}/{group}/{type_slug}/{device_id}/status", status_payload, retain=True)
 
-                new_node_payload = {
-                    "source": "hub_master_01",
-                    "target": "backend_api",
-                    "msg_type": "STATUS",
-                    "timestamp": config.get_unix_time(),
-                    "route": {
-                        "transport": "MQTT",
-                        "route_id": "hub_discovery_notice",
-                        "current_hop_index": 0,
-                        "hops": ["backend_api"],
-                        "link_diagnostics": []
-                    },
-                    "data": {
+                new_node_payload = message_builder.build_mqtt_payload(
+                    source="hub_master_01",
+                    target="backend_api",
+                    msg_type="STATUS",
+                    data={
                         "mac": sender_mac_str,
                         "device_type": node_type,
                         "device_id": device_id,
                         "custom_name": node_info["custom_name"]
-                    }
-                }
+                    },
+                    route_transport="MQTT",
+                    route_id="hub_discovery_notice",
+                    current_hop_index=0,
+                    hops=["backend_api"]
+                )
                 mqtt_client.publish_msg("farm/config/new_node_added", new_node_payload)
 
             elif msg_type in ("TELE", "TELEMETRY"):
@@ -485,20 +475,17 @@ def hub_rx_processor_loop():
                 tele_payload["device_id"] = device_id
                 tele_payload["node_mac"] = sender_mac_str
 
-                mqtt_payload = {
-                    "source": source or device_id,
-                    "target": "hub_master_01",
-                    "msg_type": "TELEMETRY",
-                    "timestamp": packet.get("raw", {}).get("timestamp", int(config.get_unix_time())),
-                    "route": {
-                        "transport": "ESPNOW",
-                        "route_id": packet.get("route", {}).get("route_id", "direct"),
-                        "current_hop_index": packet.get("current_hop_index", 0),
-                        "hops": packet.get("hops", []),
-                        "link_diagnostics": []
-                    },
-                    "data": tele_payload
-                }
+                mqtt_payload = message_builder.build_mqtt_payload(
+                    source=source or device_id,
+                    target="hub_master_01",
+                    msg_type="TELEMETRY",
+                    data=tele_payload,
+                    route_transport="ESPNOW",
+                    route_id=packet.get("route", {}).get("route_id", "direct"),
+                    current_hop_index=packet.get("current_hop_index", 0),
+                    hops=packet.get("hops", []),
+                    timestamp=packet.get("raw", {}).get("timestamp", int(config.get_unix_time()))
+                )
                 mqtt_client.publish_msg(tele_topic, mqtt_payload)
 
             elif msg_type == "ACK":
@@ -520,20 +507,17 @@ def hub_rx_processor_loop():
                     "timestamp": config.get_unix_time()
                 }
 
-                mqtt_payload = {
-                    "source": source or device_id,
-                    "target": "hub_master_01",
-                    "msg_type": "ACK",
-                    "timestamp": packet.get("raw", {}).get("timestamp", int(config.get_unix_time())),
-                    "route": {
-                        "transport": "ESPNOW",
-                        "route_id": packet.get("route", {}).get("route_id", "direct"),
-                        "current_hop_index": packet.get("current_hop_index", 0),
-                        "hops": packet.get("hops", []),
-                        "link_diagnostics": []
-                    },
-                    "data": exec_payload
-                }
+                mqtt_payload = message_builder.build_mqtt_payload(
+                    source=source or device_id,
+                    target="hub_master_01",
+                    msg_type="ACK",
+                    data=exec_payload,
+                    route_transport="ESPNOW",
+                    route_id=packet.get("route", {}).get("route_id", "direct"),
+                    current_hop_index=packet.get("current_hop_index", 0),
+                    hops=packet.get("hops", []),
+                    timestamp=packet.get("raw", {}).get("timestamp", int(config.get_unix_time()))
+                )
                 mqtt_client.publish_msg(f"{site}/{group}/{node_type}/{device_id}/command/response", mqtt_payload)
                 mqtt_client.publish_msg(f"{site}/{group}/{node_type}/{device_id}/acks", mqtt_payload)
                 mqtt_client.publish_msg(f"farm/{client_id}/command_response", mqtt_payload)
@@ -555,20 +539,17 @@ def hub_rx_processor_loop():
                 alert_payload["device_type"] = node_type.upper()
                 alert_payload["node_mac"] = sender_mac_str
 
-                mqtt_payload = {
-                    "source": source or device_id,
-                    "target": "hub_master_01",
-                    "msg_type": "ALERT",
-                    "timestamp": packet.get("raw", {}).get("timestamp", int(config.get_unix_time())),
-                    "route": {
-                        "transport": "ESPNOW",
-                        "route_id": packet.get("route", {}).get("route_id", "direct"),
-                        "current_hop_index": packet.get("current_hop_index", 0),
-                        "hops": packet.get("hops", []),
-                        "link_diagnostics": []
-                    },
-                    "data": alert_payload
-                }
+                mqtt_payload = message_builder.build_mqtt_payload(
+                    source=source or device_id,
+                    target="hub_master_01",
+                    msg_type="ALERT",
+                    data=alert_payload,
+                    route_transport="ESPNOW",
+                    route_id=packet.get("route", {}).get("route_id", "direct"),
+                    current_hop_index=packet.get("current_hop_index", 0),
+                    hops=packet.get("hops", []),
+                    timestamp=packet.get("raw", {}).get("timestamp", int(config.get_unix_time()))
+                )
                 mqtt_client.publish_msg(alert_topic, mqtt_payload)
 
             # Explicitly yield and collect garbage after processing each packet
@@ -838,23 +819,16 @@ def espnow_receiver_thread(heartbeats=None):
                 except Exception:
                     active_ch = 4
                 hub_mac_str = bytes_to_mac(sta.config('mac'))
-                beacon_pkt = {
-                    "src": "hub_master_01",
-                    "dst": "broadcast",
-                    "t": "BEACON",
-                    "ts": int(config.get_unix_time()),
-                    "rt": {"hops": ["ff:ff:ff:ff:ff:ff"]},
-                    "pld": {
-                        "hub_mac": hub_mac_str,
-                        "sender_mac": hub_mac_str,
-                        "channel": active_ch
-                    }
+                beacon_payload = {
+                    "hub_mac": hub_mac_str,
+                    "sender_mac": hub_mac_str,
+                    "channel": active_ch
                 }
                 try:
                     add_peer_safe(_e, b'\xff\xff\xff\xff\xff\xff')
                     send_espnow_msg("ff:ff:ff:ff:ff:ff", {
                         "msg_type": "BEACON",
-                        "payload": beacon_pkt["pld"]
+                        "payload": beacon_payload
                     })
                 except Exception as b_err:
                     print(" Beacon send notice:", b_err)
