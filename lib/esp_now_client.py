@@ -414,7 +414,18 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
 
         except Exception as err:
             err_str = str(err)
-            if "buffer error" not in err_str:
+            if "buffer error" in err_str:
+                try:
+                    _e.active(False)
+                except:
+                    pass
+                time.sleep_ms(50)
+                try:
+                    _e = espnow.ESPNow()
+                    _e.active(True)
+                except:
+                    pass
+            else:
                 print("Client loop error:", err)
             time.sleep_ms(100)
 

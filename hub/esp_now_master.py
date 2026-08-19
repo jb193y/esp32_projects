@@ -480,7 +480,16 @@ def espnow_test_receiver_thread(heartbeats=None):
                 except Exception as reply_err:
                     print(f" ESP-NOW Test reply error: {reply_err}")
         except Exception as recv_err:
-            print(f" ESP-NOW Test receive error: {recv_err}")
+            err_str = str(recv_err)
+            if "buffer error" in err_str:
+                try:
+                    _e.active(False)
+                except:
+                    pass
+                time.sleep_ms(50)
+                init_test_espnow()
+            else:
+                print(f" ESP-NOW Test receive error: {recv_err}")
             time.sleep_ms(100)
 
 def espnow_receiver_thread(heartbeats=None):
@@ -819,6 +828,18 @@ def espnow_receiver_thread(heartbeats=None):
 
         except Exception as e:
             err_str = str(e)
-            if "buffer error" not in err_str:
+            if "buffer error" in err_str:
+                try:
+                    _e.active(False)
+                except:
+                    pass
+                time.sleep_ms(50)
+                try:
+                    _e = espnow.ESPNow()
+                    _e.active(True)
+                    _e.config(rxbuf=4096)
+                except:
+                    pass
+            else:
                 print(f"Error in espnow_receiver_thread loop: {e}")
             time.sleep_ms(100)
