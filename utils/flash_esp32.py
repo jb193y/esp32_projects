@@ -173,13 +173,13 @@ def main():
     if up_to_date_files:
         print("\nUp-to-date files (skipped):")
         for rel_path in up_to_date_files:
-            print(f" - Up to date: {rel_path}")
+            print(f" - {rel_path}")
             
     # Print and copy out-of-sync files
     if out_of_sync_files:
         print(f"\nSynchronizing out-of-sync files to ESP32 on {args.port}...")
         for rel_path, local_abs_path in out_of_sync_files:
-            print(f" - Copying: {rel_path} (out of sync)...")
+            print(f" - {rel_path}")
             target_path = f":{rel_path}"
             subprocess.run([*mpremote, 'connect', args.port, 'fs', 'cp', local_abs_path, target_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
  
