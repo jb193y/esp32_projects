@@ -471,14 +471,24 @@ def hub_rx_processor_loop():
                     continue
 
                 nodes = load_nodes()
-                node_info = nodes.get(sender_mac_str, {})
+                
+                # Resolve original sender MAC address from packet source ID
+                original_sender_mac = None
+                for mac, info in nodes.items():
+                    if info.get("node_id") == source or info.get("custom_name") == source:
+                        original_sender_mac = mac
+                        break
+                if not original_sender_mac:
+                    original_sender_mac = sender_mac_str
+
+                node_info = nodes.get(original_sender_mac, {})
                 node_type = node_info.get("node_type", "node").lower()
-                device_id = node_info.get("node_id", sender_mac_str.replace(':', '')).lower()
+                device_id = node_info.get("node_id", original_sender_mac.replace(':', '')).lower()
 
                 tele_topic = f"{site}/{group}/{node_type}/{device_id}/telemetry"
                 tele_payload = data.copy() if isinstance(data, dict) else {"data": data}
                 tele_payload["device_id"] = device_id
-                tele_payload["node_mac"] = sender_mac_str
+                tele_payload["node_mac"] = original_sender_mac
 
                 mqtt_payload = message_builder.build_mqtt_payload(
                     source=source or device_id,
@@ -493,15 +503,33 @@ def hub_rx_processor_loop():
                 )
                 mqtt_client.publish_msg(tele_topic, mqtt_payload)
 
-                # Send ESP-NOW ACK back to the client to confirm receipt and update their last seen timestamp
+                # Compute the reverse routing path for multi-hop ACK delivery
+                incoming_hops = packet.get("hops", [])
+                relay_hops = []
+                if incoming_hops:
+                    relay_hops = list(incoming_hops)
+                    if len(relay_hops) > 0 and (relay_hops[-1].lower() == hub_sta_mac.lower() or relay_hops[-1].lower() == hub_ap_mac.lower()):
+                        relay_hops.pop()
+                
+                return_hops = []
+                for hop in reversed(relay_hops):
+                    return_hops.append(hop)
+                return_hops.append(original_sender_mac)
+
+                # Send ESP-NOW ACK back to the client via the reverse path
                 try:
-                    send_espnow_msg(sender_mac_str, {
-                        "msg_type": "ACK",
-                        "payload": {
-                            "status": "received",
-                            "topic": tele_topic
-                        }
-                    }, target_id=device_id)
+                    send_espnow_msg(
+                        target_mac_str=return_hops[0],
+                        msg_dict={
+                            "msg_type": "ACK",
+                            "payload": {
+                                "status": "received",
+                                "topic": tele_topic
+                            }
+                        },
+                        routing_path=return_hops,
+                        target_id=device_id
+                    )
                 except Exception as ack_err:
                     print(" [Hub] Telemetry ACK send error:", ack_err)
 
