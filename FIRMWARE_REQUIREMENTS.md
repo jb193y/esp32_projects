@@ -49,5 +49,5 @@ To flash/upgrade an ESP32 node to MicroPython `v1.27.0`:
 
 4. **Upload Firmware Code**:
    ```bash
-   mpremote connect port:COM12 cp valve_controller/boot.py :boot.py + cp valve_controller/config.defaults.json :config.defaults.json + cp valve_controller/config.json :config.json + cp valve_controller/main.py :main.py + cp lib/config.py :lib/config.py + cp lib/led_status.py :lib/led_status.py + cp lib/ble_manager.py :lib/ble_manager.py + cp lib/esp_now_client.py :lib/esp_now_client.py + cp lib/relay_engine.py :lib/relay_engine.py + cp lib/factory_reset.py :lib/factory_reset.py
+    mpremote connect port:COM12 cp valve_controller/boot.py :boot.py + cp valve_controller/config.defaults.json :config.defaults.json + cp valve_controller/config.json :config.json + cp valve_controller/main.py :main.py + cp lib/config.py :lib/config.py + cp lib/led_status.py :lib/led_status.py + cp lib/ble_manager.py :lib/ble_manager.py + cp lib/espnow_client.py :lib/espnow_client.py + cp lib/espnow_relay.py :lib/espnow_relay.py + cp lib/factory_reset.py :lib/factory_reset.py
    ```

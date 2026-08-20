@@ -8,7 +8,7 @@ import gc
 import config
 import led_status
 import ble_manager
-import esp_now_client
+import espnow_client
 import factory_reset
 
 # State
@@ -127,7 +127,7 @@ def execute_command(cmd, args):
 
     if cmd == "VALVE_OPEN":
         pulse_solenoid(valve_id, open_pulse=True)
-        esp_now_client.send_ack_or_tele_to_hub("ACK", {
+        espnow_client.send_ack_or_tele_to_hub("ACK", {
             "valve_id": valve_id,
             "valves": {vid: v["state"] for vid, v in valves.items()},
             "node_status": "active"
@@ -135,7 +135,7 @@ def execute_command(cmd, args):
 
     elif cmd == "VALVE_CLOSE":
         pulse_solenoid(valve_id, open_pulse=False)
-        esp_now_client.send_ack_or_tele_to_hub("ACK", {
+        espnow_client.send_ack_or_tele_to_hub("ACK", {
             "valve_id": valve_id,
             "valves": {vid: v["state"] for vid, v in valves.items()},
             "node_status": "active"
@@ -146,7 +146,7 @@ def execute_command(cmd, args):
         if valve:
             valve["enabled"] = True
             save_valve_states()
-        esp_now_client.send_ack_or_tele_to_hub("ACK", {
+        espnow_client.send_ack_or_tele_to_hub("ACK", {
             "valve_id": valve_id,
             "status": "ENABLED",
             "valves": {vid: v["state"] for vid, v in valves.items()},
@@ -161,7 +161,7 @@ def execute_command(cmd, args):
                 pulse_solenoid(valve_id, open_pulse=False)
             valve["state"] = "DISABLED"
             save_valve_states()
-        esp_now_client.send_ack_or_tele_to_hub("ACK", {
+        espnow_client.send_ack_or_tele_to_hub("ACK", {
             "valve_id": valve_id,
             "status": "DISABLED",
             "valves": {vid: v["state"] for vid, v in valves.items()},
@@ -169,7 +169,7 @@ def execute_command(cmd, args):
         }, target_mac=sender_mac)
 
     elif cmd == "GET_STATUS":
-        esp_now_client.send_ack_or_tele_to_hub("ACK", {
+        espnow_client.send_ack_or_tele_to_hub("ACK", {
             "valves": {vid: v["state"] for vid, v in valves.items()},
             "node_status": "active"
         }, target_mac=sender_mac)
@@ -182,7 +182,7 @@ def execute_command(cmd, args):
                 led_status.set_status("BLE_PROVISIONING")
                 time.sleep(3)
                 led_status.set_status(prev_status)
-                esp_now_client.send_ack_or_tele_to_hub("ACK", {
+                espnow_client.send_ack_or_tele_to_hub("ACK", {
                     "status": "BLINK_COMPLETE",
                     "cmd": cmd,
                     "valves": {vid: v["state"] for vid, v in valves.items()},
@@ -196,7 +196,7 @@ def execute_command(cmd, args):
         print("🚀 OTA command received! Initiating firmware update...")
         try:
             try:
-                esp_now_client._e.active(False)
+                espnow_client._e.active(False)
             except:
                 pass
                 
@@ -320,15 +320,15 @@ def main():
         update_valve_leds(str(vid))
     
     # Initialize ESP-NOW client
-    esp_now_client.init_espnow_client()
+    espnow_client.init_espnow_client()
     if cfg.get("client", {}).get("espnow_broadcast_only", False):
         # Leave the radio quiet after pairing so the hub can return to recv().
         last_telemetry_time = time.time() + 2
     
     # Start receiver and sender threads
     heartbeats = {"esp_now": time.time()}
-    _thread.start_new_thread(esp_now_client.client_tx_loop, ())
-    _thread.start_new_thread(esp_now_client.client_listen_loop, (heartbeats, handle_hub_commands))
+    _thread.start_new_thread(espnow_client.client_tx_loop, ())
+    _thread.start_new_thread(espnow_client.client_listen_loop, (heartbeats, handle_hub_commands))
     
     print(" Valve Node ready and running loop.")
     
@@ -342,7 +342,7 @@ def main():
                 execute_command(cmd, args)
 
             # Send periodic telemetry if paired
-            if esp_now_client.is_paired():
+            if espnow_client.is_paired():
                 now = time.time()
                 random_test = client_cfg.get("espnow_random_test", False)
                 send_interval = next_telemetry_delay
@@ -364,7 +364,7 @@ def main():
                         )
                     else:
                         next_telemetry_delay = 30
-                    esp_now_client.send_ack_or_tele_to_hub("TELE", telemetry)
+                    espnow_client.send_ack_or_tele_to_hub("TELE", telemetry)
 
             time.sleep_ms(100)
 
@@ -377,7 +377,7 @@ try:
 except KeyboardInterrupt:
     print(" Keyboard interrupt received; stopping Valve Controller...")
     try:
-        esp_now_client.stop_client()
+        espnow_client.stop_client()
     except Exception as stop_err:
         print(" ESP-NOW stop notice:", stop_err)
     print(" Valve Controller stopped")

@@ -94,7 +94,7 @@ def main():
     # 3. Clean up files of the OTHER project to ensure clean swap
     if project_dir == 'valve_controller':
         # Remove Hub files if we are flashing a valve controller
-        hub_files_to_remove = ['esp_now_master.py', 'mqtt_client.py', 'network_manager.py', 'scheduler.py', 'nodes.json']
+        hub_files_to_remove = ['espnow_master.py', 'mqtt_client.py', 'network_manager.py', 'scheduler.py', 'nodes.json']
         print("Cleaning up Hub files from Valve Controller device...")
         for f in hub_files_to_remove:
             send_command(ser, f"import os\ntry: os.remove('{f}')\nexcept: pass\n")

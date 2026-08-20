@@ -1,4 +1,4 @@
-# esp_now_client.py (Shared ESP-NOW Client Library)
+# espnow_client.py (Shared ESP-NOW Client Library)
 import network
 try:
     import espnow
@@ -10,7 +10,7 @@ except ImportError:
 import ujson
 import time
 import config
-import relay_engine
+import espnow_relay
 import message_builder
 
 def set_wifi_channel(ch):
@@ -319,7 +319,7 @@ def init_espnow_client(on_cmd_received_fn=None):
     except:
         pass
     
-    relay_engine.init_relay_engine(_e, lambda next_hop_bytes, payload_bytes, phys_mac, target_id: tx_queue.put((next_hop_bytes, payload_bytes, phys_mac, target_id)))
+    espnow_relay.init_relay_engine(_e, lambda next_hop_bytes, payload_bytes, phys_mac, target_id: tx_queue.put((next_hop_bytes, payload_bytes, phys_mac, target_id)))
     
     send_pairing_request()
     return _e
@@ -437,7 +437,7 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                                 print("Error updating config on pairing:", ex)
 
                     # Relaying and target validation
-                    is_actually_for_us = relay_engine.process_and_relay(packet)
+                    is_actually_for_us = espnow_relay.process_and_relay(packet)
 
                     # Update RX timestamp if packet is from Hub
                     current_cfg = config.load_config()

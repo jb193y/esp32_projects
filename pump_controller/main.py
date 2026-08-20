@@ -9,7 +9,7 @@ import led_status
 import ble_manager
 import sensors
 import safety_monitor
-import esp_now_client
+import espnow_client
 
 # State
 pump_relay_pin = None
@@ -43,7 +43,7 @@ def handle_estop_alert(reason):
         active_faults.append("E-STOP")
         
     print(f"🚨 Dispatching high-priority E-Stop alert to Hub: {reason}")
-    esp_now_client.send_to_hub("ALERT", {
+    espnow_client.send_to_hub("ALERT", {
         "alert_type": "e_stop_tripped",
         "message": reason
     })
@@ -59,18 +59,18 @@ def handle_hub_commands(cmd, args):
     if cmd == "PUMP_ON":
         if "E-STOP" in active_faults or not safety_monitor.check_safety_state():
             print("❌ Cannot start: E-Stop is active!")
-            esp_now_client.send_to_hub("ACK", {"status": "rejected", "reason": "estop_active"})
+            espnow_client.send_to_hub("ACK", {"status": "rejected", "reason": "estop_active"})
             return
             
         if active_faults:
             print(f"❌ Cannot start: Active faults present: {active_faults}")
-            esp_now_client.send_to_hub("ACK", {"status": "rejected", "reason": f"faults_{active_faults}"})
+            espnow_client.send_to_hub("ACK", {"status": "rejected", "reason": f"faults_{active_faults}"})
             return
             
         if current_mode == "RESTART_DELAY" and time.time() < restart_allowed_at:
             remaining = int(restart_allowed_at - time.time())
             print(f"❌ Cannot start: In restart delay. Remaining: {remaining}s")
-            esp_now_client.send_to_hub("ACK", {"status": "rejected", "reason": f"restart_delay_{remaining}s"})
+            espnow_client.send_to_hub("ACK", {"status": "rejected", "reason": f"restart_delay_{remaining}s"})
             return
             
         print("🔌 Turning Pump Relay ON")
@@ -78,7 +78,7 @@ def handle_hub_commands(cmd, args):
         current_mode = "RUNNING"
         led_status.set_status("RUNNING")
         buzzer_beep(1, 500)
-        esp_now_client.send_to_hub("ACK", {"status": "pump_on"})
+        espnow_client.send_to_hub("ACK", {"status": "pump_on"})
         
     elif cmd == "PUMP_OFF":
         print("🔌 Turning Pump Relay OFF")
@@ -86,18 +86,18 @@ def handle_hub_commands(cmd, args):
         if current_mode != "FAULT":
             current_mode = "OFF"
             led_status.set_status("NORMAL_OFF")
-        esp_now_client.send_to_hub("ACK", {"status": "pump_off"})
+        espnow_client.send_to_hub("ACK", {"status": "pump_off"})
         
     elif cmd == "CLEAR_FAULT":
         print("🔓 Fault clear request received")
         if "E-STOP" in active_faults:
             if not safety_monitor.reset_estop():
-                esp_now_client.send_to_hub("ACK", {"status": "rejected", "reason": "estop_still_pressed"})
+                espnow_client.send_to_hub("ACK", {"status": "rejected", "reason": "estop_still_pressed"})
                 return
         active_faults.clear()
         current_mode = "OFF"
         led_status.set_status("NORMAL_OFF")
-        esp_now_client.send_to_hub("ACK", {"status": "faults_cleared"})
+        espnow_client.send_to_hub("ACK", {"status": "faults_cleared"})
 
 def check_sensors_and_safety():
     global current_mode, active_faults, pump_relay_pin, restart_allowed_at
@@ -128,7 +128,7 @@ def check_sensors_and_safety():
         led_status.set_status("FAULT")
         pump_relay_pin.value(0)
         buzzer_beep(5, 100)
-        esp_now_client.send_to_hub("ALERT", {"alert_type": "overcurrent_fault", "val": rms_current})
+        espnow_client.send_to_hub("ALERT", {"alert_type": "overcurrent_fault", "val": rms_current})
         return rms_current, rms_voltage
 
     # 2. Dry Run Safety Check
@@ -139,7 +139,7 @@ def check_sensors_and_safety():
         led_status.set_status("FAULT")
         pump_relay_pin.value(0)
         buzzer_beep(4, 150)
-        esp_now_client.send_to_hub("ALERT", {"alert_type": "dry_run_fault", "val": rms_current})
+        espnow_client.send_to_hub("ALERT", {"alert_type": "dry_run_fault", "val": rms_current})
         return rms_current, rms_voltage
 
     # 3. Overvoltage / Undervoltage Safety Check
@@ -151,7 +151,7 @@ def check_sensors_and_safety():
         current_mode = "RESTART_DELAY"
         led_status.set_status("RESTART_DELAY")
         restart_allowed_at = time.time() + limits.get("restart_delay_sec", 60)
-        esp_now_client.send_to_hub("ALERT", {"alert_type": "voltage_instability_tripped", "val": rms_voltage})
+        espnow_client.send_to_hub("ALERT", {"alert_type": "voltage_instability_tripped", "val": rms_voltage})
 
     return rms_current, rms_voltage
 
@@ -199,10 +199,10 @@ def main():
     sensors.init_sensors()
     safety_monitor.init_safety(pump_relay_pin, handle_estop_alert)
     
-    esp_now_client.init_espnow_client(handle_hub_commands)
+    espnow_client.init_espnow_client(handle_hub_commands)
     
     heartbeats = {"esp_now": time.time()}
-    _thread.start_new_thread(esp_now_client.client_listen_loop, (heartbeats, handle_hub_commands))
+    _thread.start_new_thread(espnow_client.client_listen_loop, (heartbeats, handle_hub_commands))
     
     print("✅ Pump systems ready and listening!")
     buzzer_beep(2, 80)
@@ -220,7 +220,7 @@ def main():
                 if current_mode == "RESTART_DELAY":
                     status_code = f"RESTART_DELAY_{int(restart_allowed_at - now)}s"
                     
-                esp_now_client.send_to_hub("TELE", {
+                espnow_client.send_to_hub("TELE", {
                     "status": status_code,
                     "rms_current": current,
                     "rms_voltage": voltage,

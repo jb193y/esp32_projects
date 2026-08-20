@@ -103,7 +103,7 @@ def _provision_confirmation_timer_bg():
         except Exception:
             pass
 
-# Callback from esp_now_master to dispatch commands
+# Callback from espnow_master to dispatch commands
 _cmd_dispatcher = None
 
 def register_cmd_dispatcher(dispatcher):

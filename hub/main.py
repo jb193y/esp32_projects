@@ -9,7 +9,7 @@ import led_status
 import ble_manager
 import network_manager
 import mqtt_client
-import esp_now_master
+import espnow_master
 import scheduler
 import factory_reset
 
@@ -78,15 +78,15 @@ def main():
         heartbeats.pop("scheduler", None)
         mqtt_client.set_enabled(False)
     else:
-        mqtt_client.register_cmd_dispatcher(esp_now_master.dispatch_command_from_mqtt)
+        mqtt_client.register_cmd_dispatcher(espnow_master.dispatch_command_from_mqtt)
         _thread.start_new_thread(network_manager.wan_thread, (heartbeats,))
         _thread.start_new_thread(mqtt_client.mqtt_thread, (heartbeats,))
 
-    receiver_fn = (esp_now_master.espnow_test_receiver_thread
-                   if espnow_only else esp_now_master.espnow_receiver_thread)
+    receiver_fn = (espnow_master.espnow_test_receiver_thread
+                   if espnow_only else espnow_master.espnow_receiver_thread)
     _thread.start_new_thread(receiver_fn, (heartbeats,))
     if not espnow_only:
-        _thread.start_new_thread(scheduler.scheduler_thread, (heartbeats, esp_now_master.send_espnow_msg))
+        _thread.start_new_thread(scheduler.scheduler_thread, (heartbeats, espnow_master.send_espnow_msg))
     print("All Hub systems active!")
     
     last_checked_system_time = time.time()

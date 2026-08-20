@@ -76,8 +76,8 @@ def main():
         (os.path.join(project_root, 'valve_controller', 'boot.py'), 'boot.py'),
         (os.path.join(project_root, 'valve_controller', 'main.py'), 'main.py'),
         (os.path.join(project_root, 'lib', 'config.py'), 'lib/config.py'),
-        (os.path.join(project_root, 'lib', 'relay_engine.py'), 'lib/relay_engine.py'),
-        (os.path.join(project_root, 'lib', 'esp_now_client.py'), 'lib/esp_now_client.py'),
+        (os.path.join(project_root, 'lib', 'espnow_relay.py'), 'lib/espnow_relay.py'),
+        (os.path.join(project_root, 'lib', 'espnow_client.py'), 'lib/espnow_client.py'),
         (os.path.join(project_root, 'lib', 'led_status.py'), 'lib/led_status.py'),
         (os.path.join(project_root, 'lib', 'ble_manager.py'), 'lib/ble_manager.py'),
     ]
