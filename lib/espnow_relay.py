@@ -155,7 +155,7 @@ def process_and_relay(packet):
                 _enqueue_fn(next_hop_bytes, config.make_frame(payload_str), next_hop_mac, packet.get("dst", "unknown"))
             else:
                 add_peer_safe(_e, next_hop_bytes)
-                _e.send(next_hop_bytes, config.make_frame(payload_str))
+                config.send_fragmented(_e, next_hop_bytes, config.make_frame(payload_str))
             print(" Packet relayed successfully.")
         except Exception as e:
             print(f" Failed to relay packet to next hop: {e}")

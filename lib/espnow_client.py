@@ -55,7 +55,7 @@ def client_tx_loop():
                 
             try:
                 add_peer_safe(_e, next_hop_bytes)
-                res = _e.send(next_hop_bytes, payload_bytes)
+                res = config.send_fragmented(_e, next_hop_bytes, payload_bytes)
                 print(f" [TX Queue] Envelope sent to next hop {phys_mac} for destination {target_id} (res={res})")
                 print(repr(payload_bytes))
                 print()
@@ -228,7 +228,7 @@ def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
     next_hop_bytes = mac_to_bytes(phys_mac)
 
     try:
-        payload_str = ujson.dumps(envelope)
+        payload_str = config.compact_json(envelope)
         frame_bytes = config.make_frame(payload_str)
         tx_queue.put((next_hop_bytes, frame_bytes, phys_mac, target_id))
         return True
@@ -261,7 +261,7 @@ def send_direct_espnow(target_mac_str, target_id, msg_type, payload):
 
     next_hop_bytes = mac_to_bytes(target_mac_str)
     try:
-        payload_str = ujson.dumps(envelope)
+        payload_str = config.compact_json(envelope)
         frame_bytes = config.make_frame(payload_str)
         tx_queue.put((next_hop_bytes, frame_bytes, target_mac_str, target_id))
         return True
@@ -308,7 +308,7 @@ def send_discovery_request():
     )
 
     try:
-        payload_str = ujson.dumps(envelope)
+        payload_str = config.compact_json(envelope)
         frame_bytes = config.make_frame(payload_str)
         tx_queue.put((b'\xff\xff\xff\xff\xff\xff', frame_bytes, "ff:ff:ff:ff:ff:ff", "broadcast"))
         return True

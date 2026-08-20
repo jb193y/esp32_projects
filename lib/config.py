@@ -123,3 +123,46 @@ class Queue:
             return len(self._queue)
         finally:
             self._lock.release()
+
+def compact_json(obj):
+    import ujson
+    s = ujson.dumps(obj)
+    res = []
+    in_string = False
+    escaped = False
+    for char in s:
+        if char == '"' and not escaped:
+            in_string = not in_string
+            res.append(char)
+        elif char == '\\' and in_string:
+            escaped = not escaped
+            res.append(char)
+        else:
+            escaped = False
+            if not in_string and char in (' ', '\n', '\r', '\t'):
+                continue
+            res.append(char)
+    return "".join(res)
+
+def send_fragmented(e, peer_bytes, frame_bytes, chunk_size=240, delay_ms=10):
+    import time
+    total_len = len(frame_bytes)
+    if total_len <= chunk_size:
+        return e.send(peer_bytes, frame_bytes)
+        
+    offset = 0
+    success = True
+    while offset < total_len:
+        chunk = frame_bytes[offset:offset+chunk_size]
+        try:
+            res = e.send(peer_bytes, chunk)
+            if res is False:
+                success = False
+        except Exception as ex:
+            print("Error sending chunk:", ex)
+            success = False
+        offset += chunk_size
+        if offset < total_len:
+            time.sleep_ms(delay_ms)
+            
+    return success

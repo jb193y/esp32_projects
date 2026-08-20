@@ -152,7 +152,7 @@ def send_espnow_msg(target_mac_str, msg_dict, routing_path=None, target_id=None)
     next_hop_bytes = mac_to_bytes(phys_mac)
 
     try:
-        payload_str = ujson.dumps(envelope)
+        payload_str = config.compact_json(envelope)
         frame_bytes = config.make_frame(payload_str)
         tx_queue.put((next_hop_bytes, frame_bytes, phys_mac, target_id or target_mac_str))
         return True
@@ -339,7 +339,7 @@ def hub_tx_loop():
             try:
                 if phys_mac != "ff:ff:ff:ff:ff:ff":
                     add_peer_safe(_e, next_hop_bytes)
-                res = _e.send(next_hop_bytes, payload_bytes)
+                res = config.send_fragmented(_e, next_hop_bytes, payload_bytes)
                 if phys_mac == "ff:ff:ff:ff:ff:ff":
                     print(" ESP-NOW broadcasted message")
                 else:
@@ -736,7 +736,7 @@ def espnow_test_receiver_thread(heartbeats=None):
                         }
                     }
                     command_bytes = mac_to_bytes(peer_mac)
-                    tx_queue.put((command_bytes, config.make_frame(ujson.dumps(command_packet)), peer_mac, peer_info["id"]))
+                    tx_queue.put((command_bytes, config.make_frame(config.compact_json(command_packet)), peer_mac, peer_info["id"]))
                     print(f" [Test] Enqueued CMD to {peer_mac} ({peer_info['id']}): {command}")
                     next_command_at = time.time() + random.randint(command_min_sec, command_max_sec)
                 time.sleep_ms(10)
@@ -812,7 +812,7 @@ def espnow_test_receiver_thread(heartbeats=None):
                     }
 
                     reply_peer = mac_to_bytes(sender)
-                    tx_queue.put((reply_peer, config.make_frame(ujson.dumps(reply)), sender, logical_sender))
+                    tx_queue.put((reply_peer, config.make_frame(config.compact_json(reply)), sender, logical_sender))
                     print(f" [Test] Enqueued reply ACK to {sender}")
 
                 except Exception as reply_err:
