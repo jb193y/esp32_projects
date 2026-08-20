@@ -247,6 +247,11 @@ def send_pairing_request():
     if _e is None:
         return
 
+    # Enforce a 2-second rate limit on pairing requests
+    if time.time() - _last_pairing_tx_time < 2:
+        return
+    _last_pairing_tx_time = time.time()
+
     cfg = config.load_config()
     client_cfg = cfg.get("client", {})
     node_type = client_cfg.get("type", "client").upper()
@@ -263,9 +268,6 @@ def send_pairing_request():
     broadcast_only = client_cfg.get("espnow_broadcast_only", False)
 
     if broadcast_only:
-        if time.time() - _last_pairing_tx_time < 3:
-            return
-        _last_pairing_tx_time = time.time()
         test_ch = cfg.get("wifi", {}).get("channel", 6)
         set_wifi_channel(test_ch)
         print(f"ESP-NOW broadcast test: staying on Channel {test_ch}")
@@ -346,6 +348,9 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
         if _paired and time.time() - _last_hub_rx_time > 45:
             print(" Lost contact with Hub for 45s. Re-entering scanning mode...")
             _paired = False
+
+        if not _paired:
+            send_pairing_request()
 
         try:
             host, msg = _e.recv(500)
@@ -449,11 +454,7 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
 
                         on_cmd_received_fn(cmd, payload)
             else:
-                if not _paired:
-                    send_pairing_request()
-                    time.sleep(2) # Reduce sleep to re-attempt pairing faster
-                else:
-                    time.sleep_ms(50)
+                time.sleep_ms(50)
 
         except Exception as err:
             err_str = str(err)
