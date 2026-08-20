@@ -493,6 +493,18 @@ def hub_rx_processor_loop():
                 )
                 mqtt_client.publish_msg(tele_topic, mqtt_payload)
 
+                # Send ESP-NOW ACK back to the client to confirm receipt and update their last seen timestamp
+                try:
+                    send_espnow_msg(sender_mac_str, {
+                        "msg_type": "ACK",
+                        "payload": {
+                            "status": "received",
+                            "topic": tele_topic
+                        }
+                    }, target_id=device_id)
+                except Exception as ack_err:
+                    print(" [Hub] Telemetry ACK send error:", ack_err)
+
             elif msg_type == "ACK":
                 site = cfg.get("client", {}).get("site", "default_site")
                 group = cfg.get("client", {}).get("group", "all")
