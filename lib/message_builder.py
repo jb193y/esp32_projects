@@ -12,8 +12,8 @@ def build_espnow_envelope(source, destination, msg_type, payload, route_id="dire
         "t": msg_type,
         "ts": int(config.get_unix_time()),
         "rt": {
-            "route_id": route_id,
-            "hops": hops
+            "rid": route_id,
+            "h": hops
         },
         "pld": payload
     }

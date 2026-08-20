@@ -136,8 +136,12 @@ def process_and_relay(packet):
             raw_packet = packet["raw"]
             route_obj = raw_packet.get("route") or raw_packet.get("rt")
             if isinstance(route_obj, dict):
-                route_obj["current_hop_index"] = next_hop_index
-                route_obj["hops"] = hops
+                if "chi" in route_obj or "rt" in raw_packet:
+                    route_obj["chi"] = next_hop_index
+                    route_obj["h"] = hops
+                else:
+                    route_obj["current_hop_index"] = next_hop_index
+                    route_obj["hops"] = hops
             else:
                 raw_packet["current_hop_index"] = next_hop_index
                 raw_packet["route"] = {"current_hop_index": next_hop_index, "hops": hops}

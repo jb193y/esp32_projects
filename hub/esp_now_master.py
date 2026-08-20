@@ -95,11 +95,11 @@ def parse_packet(payload_str):
     source = p.get("source") or p.get("src")
     
     route = p.get("route") or p.get("rt", {})
-    hops = route.get("hops") if isinstance(route, dict) else []
+    hops = (route.get("hops") or route.get("h")) if isinstance(route, dict) else []
     if not hops:
         hops = p.get("routing_path") or p.get("path") or []
         
-    current_hop_index = route.get("current_hop_index") if isinstance(route, dict) else 0
+    current_hop_index = (route.get("current_hop_index") or route.get("chi")) if isinstance(route, dict) else 0
     if current_hop_index == 0:
         current_hop_index = p.get("current_hop_index") or p.get("hop", 0)
         
@@ -441,7 +441,7 @@ def hub_rx_processor_loop():
                         "mac": sender_mac_str
                     },
                     route_transport="ESPNOW",
-                    route_id=packet.get("route", {}).get("route_id", "direct"),
+                    route_id=packet.get("route", {}).get("route_id") or packet.get("route", {}).get("rid", "direct"),
                     current_hop_index=packet.get("current_hop_index", 0),
                     hops=packet.get("hops", [])
                 )
@@ -486,7 +486,7 @@ def hub_rx_processor_loop():
                     msg_type="TELEMETRY",
                     data=tele_payload,
                     route_transport="ESPNOW",
-                    route_id=packet.get("route", {}).get("route_id", "direct"),
+                    route_id=packet.get("route", {}).get("route_id") or packet.get("route", {}).get("rid", "direct"),
                     current_hop_index=packet.get("current_hop_index", 0),
                     hops=packet.get("hops", []),
                     timestamp=packet.get("raw", {}).get("timestamp", int(config.get_unix_time()))
@@ -518,7 +518,7 @@ def hub_rx_processor_loop():
                     msg_type="ACK",
                     data=exec_payload,
                     route_transport="ESPNOW",
-                    route_id=packet.get("route", {}).get("route_id", "direct"),
+                    route_id=packet.get("route", {}).get("route_id") or packet.get("route", {}).get("rid", "direct"),
                     current_hop_index=packet.get("current_hop_index", 0),
                     hops=packet.get("hops", []),
                     timestamp=packet.get("raw", {}).get("timestamp", int(config.get_unix_time()))
@@ -550,7 +550,7 @@ def hub_rx_processor_loop():
                     msg_type="ALERT",
                     data=alert_payload,
                     route_transport="ESPNOW",
-                    route_id=packet.get("route", {}).get("route_id", "direct"),
+                    route_id=packet.get("route", {}).get("route_id") or packet.get("route", {}).get("rid", "direct"),
                     current_hop_index=packet.get("current_hop_index", 0),
                     hops=packet.get("hops", []),
                     timestamp=packet.get("raw", {}).get("timestamp", int(config.get_unix_time()))
