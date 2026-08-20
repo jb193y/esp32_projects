@@ -351,7 +351,6 @@ def main():
                     any_open = any(v.get("state") == "OPEN" for v in valves.values())
                     node_status = "watering" if any_open else "valve_idle"
                     telemetry = {
-                        "node_id": client_cfg.get("id"),
                         "status": node_status,
                         "valves": {vid: v["state"] for vid, v in valves.items()},
                         "rssi": -50

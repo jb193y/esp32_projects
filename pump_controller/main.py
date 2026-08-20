@@ -221,7 +221,6 @@ def main():
                     status_code = f"RESTART_DELAY_{int(restart_allowed_at - now)}s"
                     
                 esp_now_client.send_to_hub("TELE", {
-                    "node_id": client_cfg.get("id"),
                     "status": status_code,
                     "rms_current": current,
                     "rms_voltage": voltage,
