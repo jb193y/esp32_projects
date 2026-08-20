@@ -61,7 +61,7 @@ def load_nodes():
     except Exception:
         return {}
 
-def save_node(mac_str, node_type, node_id=None, name=None):
+def save_node(mac_str, node_type, node_id=None, name=None, parent=None):
     nodes = load_nodes()
     nodes[mac_str] = {
         "node_type": node_type,
@@ -69,9 +69,14 @@ def save_node(mac_str, node_type, node_id=None, name=None):
         "custom_name": name or "{}_{}".format(node_type, mac_str[-5:].replace(':', '')),
         "paired_at": config.get_unix_time()
     }
+    if parent and parent != mac_str:
+        nodes[mac_str]["parent"] = parent
+    elif "parent" in nodes[mac_str]:
+        nodes[mac_str].pop("parent")
+
     with open(NODES_FILE, 'w') as f:
         ujson.dump(nodes, f)
-    print(f" Node saved to registry: {mac_str} -> {node_type}")
+    print(f" Node saved to registry: {mac_str} -> {node_type} (parent: {parent})")
     return nodes[mac_str]
 
 def add_peer_safe(e, peer_bytes, channel=0):
@@ -296,7 +301,11 @@ def dispatch_command_from_mqtt(target_node, command, routing_path, args):
                     mac_routing_path.append(hop_mac)
 
     if not mac_routing_path:
-        mac_routing_path = [target_mac_str]
+        parent_mac = node_info.get("parent")
+        if parent_mac and parent_mac != target_mac_str:
+            mac_routing_path = [parent_mac, target_mac_str]
+        else:
+            mac_routing_path = [target_mac_str]
 
     if node_info.get("node_type") == "PUMP" and command == "PUMP_ON":
         deficit = args.get("deficit", 10.0)
@@ -402,13 +411,39 @@ def hub_rx_processor_loop():
             if not is_for_us:
                 continue
 
+            if msg_type == "DISCOVERY_REQ":
+                print(f"DISCOVERY_REQ from {sender_mac_str} ({source})")
+                active_ch = 6
+                try:
+                    active_ch = sta.config('channel')
+                except Exception:
+                    pass
+                
+                resp_payload = {
+                    "status": "discovery_response",
+                    "hub_mac": hub_sta_mac,
+                    "parent_mac": hub_sta_mac,
+                    "channel": active_ch,
+                    "hop_count": 0,
+                    "hub_freshness": 0
+                }
+                
+                send_espnow_msg(sender_mac_str, {
+                    "msg_type": "DISCOVERY_RESP",
+                    "payload": resp_payload
+                }, target_id=source)
+                continue
+
             if msg_type == "PAIR_REQ" or (msg_type == "STATUS" and data.get("status") == "pairing_request"):
                 node_type = data.get("node_type", "UNKNOWN")
                 node_id = source or data.get("node_id") or data.get("custom_name", "")
                 custom_name = data.get("custom_name")
-                print(f"PAIR_REQ from {sender_mac_str} ({node_type}/{node_id})")
+                
+                # Support relayed pairing requests
+                actual_mac = data.get("mac") or sender_mac_str
+                print(f"PAIR_REQ from {actual_mac} ({node_type}/{node_id}) via {sender_mac_str}")
 
-                node_info = save_node(sender_mac_str, node_type, node_id=node_id, name=custom_name)
+                node_info = save_node(actual_mac, node_type, node_id=node_id, name=custom_name, parent=sender_mac_str)
 
                 active_ch = 6
                 try:
@@ -416,13 +451,18 @@ def hub_rx_processor_loop():
                 except Exception:
                     pass
 
+                # Build reverse routing path for multi-hop ACK delivery
+                reverse_path = [sender_mac_str]
+                if actual_mac != sender_mac_str:
+                    reverse_path.append(actual_mac)
+
                 send_espnow_msg(sender_mac_str, {
                     "msg_type": "ACK",
                     "payload": {"status": "paired", "hub_mac": hub_sta_mac, "channel": active_ch}
-                }, target_id=node_id)
+                }, routing_path=reverse_path, target_id=node_id)
 
                 type_slug = node_type.lower()
-                device_id = node_info.get("node_id", "").lower() or sender_mac_str.replace(':', '')
+                device_id = node_info.get("node_id", "").lower() or actual_mac.replace(':', '')
 
                 site = cfg.get("client", {}).get("site", "default_site")
                 group = cfg.get("client", {}).get("group", "all")
@@ -438,7 +478,7 @@ def hub_rx_processor_loop():
                         "device_id": device_id,
                         "status": "online",
                         "node_type": node_type,
-                        "mac": sender_mac_str
+                        "mac": actual_mac
                     },
                     route_transport="ESPNOW",
                     route_id=packet.get("route", {}).get("route_id") or packet.get("route", {}).get("rid", "direct"),
@@ -452,7 +492,7 @@ def hub_rx_processor_loop():
                     target="backend_api",
                     msg_type="STATUS",
                     data={
-                        "mac": sender_mac_str,
+                        "mac": actual_mac,
                         "device_type": node_type,
                         "device_id": device_id,
                         "custom_name": node_info["custom_name"]

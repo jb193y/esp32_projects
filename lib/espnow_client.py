@@ -223,8 +223,8 @@ def send_ack_or_tele_to_hub(msg_type, payload, target_mac=None):
         hops=hops
     )
 
-    # Use unicast next-hop MAC from routing path if available, otherwise fallback to broadcast
-    phys_mac = "ff:ff:ff:ff:ff:ff" if broadcast_only else (target_mac or (hops[0] if hops else "ff:ff:ff:ff:ff:ff"))
+    # Use next-hop MAC from routing path if available, fallback to target_mac, then broadcast
+    phys_mac = "ff:ff:ff:ff:ff:ff" if broadcast_only else ((hops[0] if hops else target_mac) or "ff:ff:ff:ff:ff:ff")
     next_hop_bytes = mac_to_bytes(phys_mac)
 
     try:
@@ -242,6 +242,80 @@ def send_to_hub(msg_type, payload):
 
 _pair_channel_idx = 0
 
+def send_direct_espnow(target_mac_str, target_id, msg_type, payload):
+    global _e
+    if _e is None:
+        return False
+
+    cfg = config.load_config()
+    source_id = cfg.get("client", {}).get("id", "unknown_node")
+
+    envelope = message_builder.build_espnow_envelope(
+        source_id,
+        target_id,
+        msg_type,
+        payload,
+        route_id="direct",
+        hops=[target_mac_str]
+    )
+
+    next_hop_bytes = mac_to_bytes(target_mac_str)
+    try:
+        payload_str = ujson.dumps(envelope)
+        frame_bytes = config.make_frame(payload_str)
+        tx_queue.put((next_hop_bytes, frame_bytes, target_mac_str, target_id))
+        return True
+    except Exception as err:
+        print(f" Failed to send direct packet to {target_id}:", err)
+        return False
+
+def send_discovery_request():
+    global _e, _pair_channel_idx, _last_pairing_tx_time
+    if _e is None:
+        return False
+
+    # Enforce a 2-second rate limit on discovery requests
+    if time.time() - _last_pairing_tx_time < 2:
+        return False
+    _last_pairing_tx_time = time.time()
+
+    cfg = config.load_config()
+    client_cfg = cfg.get("client", {})
+    source_id = client_cfg.get("id", "unknown_node")
+    node_type = client_cfg.get("type", "client").upper()
+
+    payload = {
+        "status": "discovery_request",
+        "node_type": node_type,
+        "node_id": source_id,
+        "custom_name": client_cfg.get("custom_name", "Client Node")
+    }
+
+    # Multi-Channel Mesh Scanning: cycle channels (4, 6, 1, 11) to discover nearby Hub/Repeater
+    channels = [4, 6, 1, 11]
+    ch = channels[_pair_channel_idx % len(channels)]
+    _pair_channel_idx += 1
+    set_wifi_channel(ch)
+    print(f"Scanning Channel {ch}: Broadcasting DISCOVERY_REQ from {node_type}...")
+
+    envelope = message_builder.build_espnow_envelope(
+        source_id,
+        "broadcast",
+        "DISCOVERY_REQ",
+        payload,
+        route_id="discovery",
+        hops=["ff:ff:ff:ff:ff:ff"]
+    )
+
+    try:
+        payload_str = ujson.dumps(envelope)
+        frame_bytes = config.make_frame(payload_str)
+        tx_queue.put((b'\xff\xff\xff\xff\xff\xff', frame_bytes, "ff:ff:ff:ff:ff:ff", "broadcast"))
+        return True
+    except Exception as err:
+        print(" Failed to enqueue discovery packet:", err)
+        return False
+
 def send_pairing_request():
     global _e, _pair_channel_idx, _last_hub_rx_time, _last_pairing_tx_time
     if _e is None:
@@ -255,11 +329,16 @@ def send_pairing_request():
     cfg = config.load_config()
     client_cfg = cfg.get("client", {})
     node_type = client_cfg.get("type", "client").upper()
+    
+    sta = network.WLAN(network.STA_IF)
+    local_mac = bytes_to_mac(sta.config('mac'))
+    
     payload = {
         "status": "pairing_request",
         "node_type": node_type,
         "node_id": client_cfg.get("id", ""),
-        "custom_name": client_cfg.get("custom_name", "Client Node")
+        "custom_name": client_cfg.get("custom_name", "Client Node"),
+        "mac": local_mac
     }
 
     hub_mac = cfg.get("hub", {}).get("mac", "")
@@ -350,7 +429,14 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
             _paired = False
 
         if not _paired:
-            send_pairing_request()
+            current_cfg = config.load_config()
+            parent_mac = current_cfg.get("parent", {}).get("mac", "00:00:00:00:00:00")
+            time_since_last_rx = time.time() - _last_hub_rx_time
+            
+            if parent_mac == "00:00:00:00:00:00" or time_since_last_rx > 20:
+                send_discovery_request()
+            else:
+                send_pairing_request()
 
         try:
             host, msg = _e.recv(500)
@@ -435,6 +521,60 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                                 config.update_config(upd)
                             except Exception as ex:
                                 print("Error updating config on pairing:", ex)
+
+                    # Handle Route/Parent Discovery packets
+                    if msg_type == "DISCOVERY_REQ":
+                        current_cfg = config.load_config()
+                        if _paired and (time.time() - _last_hub_rx_time < 60):
+                            sender_mac = bytes_to_mac(host)
+                            hub_mac = current_cfg.get("hub", {}).get("mac", "")
+                            channel = current_cfg.get("wifi", {}).get("channel", 6)
+                            
+                            parent_mac = current_cfg.get("parent", {}).get("mac", "")
+                            hop_count = 1 if parent_mac == hub_mac else 2
+                            
+                            resp_payload = {
+                                "status": "discovery_response",
+                                "hub_mac": hub_mac,
+                                "parent_mac": local_mac,
+                                "channel": channel,
+                                "hop_count": hop_count,
+                                "hub_freshness": int(time.time() - _last_hub_rx_time)
+                            }
+                            
+                            print(f" Received DISCOVERY_REQ from {sender_mac}. Replying with DISCOVERY_RESP...")
+                            send_direct_espnow(
+                                target_mac_str=sender_mac,
+                                target_id=source or sender_mac,
+                                msg_type="DISCOVERY_RESP",
+                                payload=resp_payload
+                            )
+                        continue
+
+                    if msg_type == "DISCOVERY_RESP" and is_for_us:
+                        resp_data = packet.get("data") or packet.get("pld", {})
+                        hub_mac = resp_data.get("hub_mac")
+                        parent_mac = resp_data.get("parent_mac")
+                        ch = resp_data.get("channel")
+                        hop_count = resp_data.get("hop_count")
+                        hub_freshness = resp_data.get("hub_freshness", 999)
+                        
+                        print(f" Received DISCOVERY_RESP from {sender_mac} (Hub={hub_mac}, Channel={ch}, Hops={hop_count})")
+                        
+                        try:
+                            upd = {
+                                "hub": {"mac": hub_mac},
+                                "parent": {"mac": parent_mac},
+                                "wifi": {"channel": ch}
+                            }
+                            config.update_config(upd)
+                            set_wifi_channel(ch)
+                            
+                            _last_hub_rx_time = time.time() - hub_freshness
+                            print(f" Discovered route: parent={parent_mac}, hub={hub_mac}, locked to channel {ch}")
+                        except Exception as ex:
+                            print(" Error saving discovered route:", ex)
+                        continue
 
                     # Relaying and target validation
                     is_actually_for_us = espnow_relay.process_and_relay(packet)
