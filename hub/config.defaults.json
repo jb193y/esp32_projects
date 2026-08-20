@@ -15,8 +15,8 @@
   "mqtt": {
     "server": "10.10.10.211",
     "port": 1883,
-    "user": "",
-    "password": "",
+    "user": "mss_client",
+    "password": "Xgs7%67$!@#_",
     "keepalive": 120,
     "telemetry_interval_sec": 60
   },

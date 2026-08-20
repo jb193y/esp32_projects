@@ -22,31 +22,17 @@ heartbeats = {
     "scheduler": time.time()
 }
 
-def watchdog_thread():
-    print("Watchdog Thread Active")
-    last_checked_system_time = time.time()
-    while True:
-        time.sleep(10)
-        now = time.time()
-
-        # Detect if system clock jumped (e.g. via NTP sync)
-        time_diff = now - last_checked_system_time
-        if abs(time_diff) > 100:
-            print(f"Watchdog: System clock jump detected (diff={time_diff}s). Adjusting heartbeats.")
-            for name in heartbeats:
-                heartbeats[name] = now
-
-        last_checked_system_time = now
-
-        for name, last_time in heartbeats.items():
-            age = now - last_time
-            if age > 90:
-                print(f"Watchdog: Thread '{name}' stalled ({age}s ago). Rebooting...")
-                time.sleep(1)
-                machine.reset()
+# Watchdog monitoring is now handled directly in the main execution loop to save thread overhead.
 
 def main():
     print("Hub Master Controller Loading...")
+    
+    # Set default thread stack size to 8KB before starting any thread to prevent stack overflow
+    try:
+        _thread.stack_size(8192)
+        print("Default thread stack size configured to 8KB")
+    except Exception as ex:
+        print("Failed to configure thread stack size:", ex)
     
     # 1. Start Status LED
     _thread.start_new_thread(led_status.led_thread, ())
@@ -101,13 +87,29 @@ def main():
     _thread.start_new_thread(receiver_fn, (heartbeats,))
     if not espnow_only:
         _thread.start_new_thread(scheduler.scheduler_thread, (heartbeats, esp_now_master.send_espnow_msg))
-    _thread.start_new_thread(watchdog_thread, ())
-    
     print("All Hub systems active!")
     
+    last_checked_system_time = time.time()
     while True:
         gc.collect()
         time.sleep(10)
+        
+        now = time.time()
+        # Detect if system clock jumped (e.g. via NTP sync)
+        time_diff = now - last_checked_system_time
+        if abs(time_diff) > 100:
+            print(f"Watchdog: System clock jump detected (diff={time_diff}s). Adjusting heartbeats.")
+            for name in heartbeats:
+                heartbeats[name] = now
+
+        last_checked_system_time = now
+
+        for name, last_time in heartbeats.items():
+            age = now - last_time
+            if age > 90:
+                print(f"Watchdog: Thread '{name}' stalled ({age}s ago). Rebooting...")
+                time.sleep(1)
+                machine.reset()
 
 if __name__ == "__main__":
     try:
