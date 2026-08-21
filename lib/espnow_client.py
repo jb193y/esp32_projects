@@ -165,6 +165,9 @@ def parse_packet(payload_str):
         "raw": p
     }
 
+def is_valid_mac(mac_str):
+    return isinstance(mac_str, str) and len(mac_str) == 17 and mac_str.count(':') == 5
+
 def get_route_for_target(target_id, target_mac=None):
     cfg = config.load_config()
     
@@ -184,9 +187,9 @@ def get_route_for_target(target_id, target_mac=None):
     dest_mac = target_mac or hub_mac
     
     hops = []
-    if parent_mac != "00:00:00:00:00:00" and parent_mac != "ff:ff:ff:ff:ff:ff":
+    if is_valid_mac(parent_mac) and parent_mac != "00:00:00:00:00:00" and parent_mac != "ff:ff:ff:ff:ff:ff":
         hops.append(parent_mac)
-    if dest_mac != "00:00:00:00:00:00" and dest_mac not in hops:
+    if is_valid_mac(dest_mac) and dest_mac not in hops:
         hops.append(dest_mac)
         
     if not hops:
@@ -472,6 +475,21 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                     print(f" Received packet from {sender_mac}: {payload_str}")
 
                     packet = parse_packet(payload_str)
+                    
+                    # Sync RTC if envelope has a valid Hub timestamp
+                    hub_ts = packet.get("timestamp") or packet.get("ts")
+                    if hub_ts and isinstance(hub_ts, (int, float)) and hub_ts > 1700000000:
+                        local_ts = config.get_unix_time()
+                        if abs(local_ts - hub_ts) > 5:
+                            try:
+                                import machine
+                                tm = time.gmtime(hub_ts - 946684800)
+                                rtc = machine.RTC()
+                                rtc.datetime((tm[0], tm[1], tm[2], tm[6], tm[3], tm[4], tm[5], 0))
+                                print(f" RTC synchronized via ESP-NOW from Hub to: {time.localtime()}")
+                            except Exception as sync_ex:
+                                print(" Failed to sync RTC via ESP-NOW:", sync_ex)
+
                     msg_type = packet.get("msg_type")
                     target = packet.get("target")
 
@@ -545,7 +563,7 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                             print(f" Received DISCOVERY_REQ from {sender_mac}. Replying with DISCOVERY_RESP...")
                             send_direct_espnow(
                                 target_mac_str=sender_mac,
-                                target_id=source or sender_mac,
+                                target_id=packet.get("source") or sender_mac,
                                 msg_type="DISCOVERY_RESP",
                                 payload=resp_payload
                             )

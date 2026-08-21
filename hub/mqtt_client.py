@@ -187,6 +187,10 @@ def on_message(topic, msg):
                 if "state" in data:
                     state_data = data["state"]
                     if isinstance(state_data, dict):
+                        # Merge state keys to top level of args to keep ESP-NOW payloads flat and compact
+                        for k, v in state_data.items():
+                            if k not in args:
+                                args[k] = v
                         if "pump" in state_data:
                             command = "PUMP_ON" if state_data["pump"] == "ON" else "PUMP_OFF"
                         elif "valve" in state_data:

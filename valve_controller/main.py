@@ -114,13 +114,19 @@ def execute_command(cmd, args):
     valve_id = "1"
     sender_mac = None
     if isinstance(args, dict):
-        valve_id = str(args.get("valve_id", "1"))
+        state_dict = args.get("state")
+        if not isinstance(state_dict, dict):
+            state_dict = {}
+        valve_id = str(args.get("valve_id") or state_dict.get("valve_id") or "1")
         sender_mac = args.get("sender_mac")
     elif isinstance(args, str):
         try:
             import ujson
             parsed = ujson.loads(args)
-            valve_id = str(parsed.get("valve_id", "1"))
+            state_dict = parsed.get("state")
+            if not isinstance(state_dict, dict):
+                state_dict = {}
+            valve_id = str(parsed.get("valve_id") or state_dict.get("valve_id") or "1")
             sender_mac = parsed.get("sender_mac")
         except:
             pass
