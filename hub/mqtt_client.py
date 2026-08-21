@@ -159,6 +159,41 @@ def publish_hub_telemetry(status_val):
     except Exception as e:
         print("Error publishing Hub telemetry:", e)
 
+def publish_hub_schedules():
+    try:
+        import scheduler
+        schedules_list = scheduler.load_schedules()
+        
+        cfg = config.load_config()
+        client_info = cfg.get("client", {})
+        client_id = client_info.get("id", "hub_master_01")
+        client_type = client_info.get("type", "hub").lower()
+        site = client_info.get("site", "default_site")
+        group = client_info.get("group", "all")
+        
+        topic = f"{site}/{group}/{client_type}/{client_id}/schedules"
+        
+        payload = {
+            "source": client_id,
+            "target": "backend_api",
+            "msg_type": "SCHEDULES",
+            "timestamp": config.get_unix_time(),
+            "route": {
+                "transport": "MQTT",
+                "route_id": "direct",
+                "current_hop_index": 0,
+                "hops": [client_id],
+                "link_diagnostics": []
+            },
+            "data": {
+                "schedules": schedules_list
+            }
+        }
+        publish_msg(topic, payload)
+        print(f"Published Hub schedules to {topic}")
+    except Exception as e:
+        print("Error publishing schedules:", e)
+
 def on_message(topic, msg):
     global _cmd_dispatcher
     try:
@@ -240,7 +275,41 @@ def on_message(topic, msg):
         print(f"Published RECEIVED_BY_HUB ACK for {target_device}:{command}")
 
         if target_device == client_id:
-            if command in ("CONFIRM_PROVISION", "confirm_provision"):
+            if command in ("UPDATE_SCHEDULE", "ADD_SCHEDULE"):
+                try:
+                    import scheduler
+                    sched_dict = args.get("schedule") or args
+                    res, msg = scheduler.add_or_update_schedule(sched_dict)
+                    print(f"Schedule update result: {res} ({msg})")
+                    publish_hub_schedules()
+                except Exception as ex:
+                    print("Error updating schedule:", ex)
+                return
+            elif command in ("DELETE_SCHEDULE", "REMOVE_SCHEDULE"):
+                try:
+                    import scheduler
+                    sched_id = args.get("schedule_id")
+                    res, msg = scheduler.remove_schedule(sched_id)
+                    print(f"Schedule remove result: {res} ({msg})")
+                    publish_hub_schedules()
+                except Exception as ex:
+                    print("Error removing schedule:", ex)
+                return
+            elif command in ("RESOURCE_SURPLUS", "RESOURCE_EVENT"):
+                try:
+                    import scheduler
+                    res_name = args.get("resource") or args.get("resource_name") or "solar"
+                    status = args.get("status") or "surplus"
+                    duration = int(args.get("duration_sec") or args.get("duration") or 3600)
+                    
+                    if status in ("surplus", "active", "available"):
+                        scheduler.set_resource_surplus(res_name, duration)
+                    else:
+                        scheduler.set_resource_surplus(res_name, 0)
+                except Exception as ex:
+                    print("Error handling resource surplus command:", ex)
+                return
+            elif command in ("CONFIRM_PROVISION", "confirm_provision"):
                 global _provision_confirmed
                 _provision_confirmed = True
                 print(" Provisioning confirmed via MQTT! System fully operational.")
@@ -320,6 +389,12 @@ def mqtt_thread(heartbeats=None):
     global _client, _is_connected
     print(" MQTT Client Thread Started")
     
+    try:
+        import scheduler
+        scheduler.register_broadcast_callback(publish_hub_schedules)
+    except Exception as reg_err:
+        print("Failed to register schedules broadcast callback:", reg_err)
+        
     cfg = config.load_config()
     mqtt_cfg = cfg.get("mqtt", {})
     client_info = cfg.get("client", {})

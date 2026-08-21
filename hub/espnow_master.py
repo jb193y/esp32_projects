@@ -411,6 +411,16 @@ def hub_rx_processor_loop():
             if not is_for_us:
                 continue
 
+            if isinstance(data, dict):
+                if data.get("resource_surplus") or data.get("solar_surplus"):
+                    try:
+                        import scheduler
+                        res_name = data.get("resource") or "solar"
+                        duration = int(data.get("duration_sec") or 1800)
+                        scheduler.set_resource_surplus(res_name, duration)
+                    except Exception as ex:
+                        print("Error setting inline ESP-NOW resource surplus:", ex)
+
             if msg_type == "DISCOVERY_REQ":
                 print(f"DISCOVERY_REQ from {sender_mac_str} ({source})")
                 active_ch = 6
@@ -636,6 +646,14 @@ def hub_rx_processor_loop():
                     timestamp=packet.get("raw", {}).get("timestamp", int(config.get_unix_time()))
                 )
                 mqtt_client.publish_msg(alert_topic, mqtt_payload)
+            elif msg_type == "RESOURCE_SURPLUS":
+                try:
+                    import scheduler
+                    res_name = data.get("resource") or data.get("resource_name") or "solar"
+                    duration = int(data.get("duration_sec") or data.get("duration") or 1800)
+                    scheduler.set_resource_surplus(res_name, duration)
+                except Exception as ex:
+                    print("Error setting ESP-NOW resource surplus command:", ex)
 
             # Explicitly yield and collect garbage after processing each packet
             gc.collect()
