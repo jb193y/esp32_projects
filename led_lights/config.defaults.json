@@ -1,0 +1,15 @@
+{
+  "client": {
+    "id": "ledlights_01",
+    "type": "ledlights",
+    "mode": "provisioning"
+  },
+  "led": {
+    "pin": 48,
+    "num_pixels": 1
+  },
+  "mqtt": {
+    "server": "192.168.1.100",
+    "port": 1883
+  }
+}
