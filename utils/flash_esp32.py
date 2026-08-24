@@ -5,6 +5,13 @@ import json
 import hashlib
 import sys
 
+"""
+	python -m esptool --port COM24 --chip esp32s3 erase_flash
+	python -m esptool --port COM24 --chip esp32s3 write_flash -z 0 "..\firmware\ESP32_GENERIC_S3-20251209-v1.27.0.bin"
+	python utils/flash_esp32.py led_lights COM24
+    mpremote connect COM24 repl
+"""
+
 def get_local_file_hash(path):
     """Calculate the SHA256 hash of a local file."""
     h = hashlib.sha256()
