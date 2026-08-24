@@ -87,7 +87,7 @@ def main():
     # Resolve project root (parent of utils) and python/mpremote path
     utils_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(utils_dir)
-    mpremote = ['mpremote']
+    mpremote = ['python', '-m', 'mpremote']
     
     # --- Argument Parsing ---
     parser = argparse.ArgumentParser(description="Delta-sync a project component to an ESP32 device.")

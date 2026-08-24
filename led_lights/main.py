@@ -4,10 +4,12 @@ import machine
 import network
 import ujson
 import ntptime
+import _thread
 
 import config
 import led_status
 from light_manager import LightManager
+import factory_reset
 
 try:
     from umqtt.simple import MQTTClient
@@ -135,6 +137,19 @@ def connect_mqtt(mqtt_cfg, client_id):
 def main():
     global light_manager, mqtt_client, is_wifi_connected, is_mqtt_connected
     
+    # Configure default thread stack size to 8KB to prevent overflow
+    try:
+        _thread.stack_size(8192)
+        print("Default thread stack size configured to 8KB")
+    except Exception as ex:
+        print("Failed to configure thread stack size:", ex)
+
+    # Initialize Factory Reset monitor (GPIO 0 & 47)
+    try:
+        factory_reset.start()
+    except Exception as fr_ex:
+        print("Failed to start Factory Reset monitor:", fr_ex)
+
     # 1. Load system config
     cfg = config.load_config()
     client_info = cfg.get("client", {})
@@ -144,7 +159,7 @@ def main():
     print(f"Booting LED Lights Node: {client_id} (Mode: {mode})")
     
     # 2. If in provisioning mode, run BLE pairing
-    if mode == "provisioning":
+    if mode in ("provisioning", "ble_setup"):
         try:
             import ble_manager
             led_status.set_status("BLE_PROVISIONING")
