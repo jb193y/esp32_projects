@@ -209,6 +209,41 @@ def on_message(topic, msg):
             msg_type = payload.get("msg_type")
             data = payload.get("data", {})
             
+            if topic_str.endswith("/config"):
+                cfg = config.load_config()
+                client_id = cfg.get("client", {}).get("id", "hub_master_02")
+                if target_device == client_id:
+                    try:
+                        settings = data.get("settings", {})
+                        
+                        # Extract and parse Well Recharge Delay
+                        well_recharge = settings.get("Well & Water Management", {}).get("Well Recharge Delay", "2 Hours")
+                        well_recharge_sec = 1800
+                        if "1" in well_recharge: well_recharge_sec = 3600
+                        elif "2" in well_recharge: well_recharge_sec = 7200
+                        elif "4" in well_recharge: well_recharge_sec = 14400
+                        elif "6" in well_recharge: well_recharge_sec = 21600
+                        elif "8" in well_recharge: well_recharge_sec = 28800
+                        
+                        wifi_ssid = settings.get("Network Configuration", {}).get("WiFi SSID")
+                        
+                        update_payload = {}
+                        if wifi_ssid:
+                            networks = cfg.get("wifi", {}).get("networks", [])
+                            if networks:
+                                networks[0]["ssid"] = wifi_ssid
+                                update_payload["wifi"] = {"networks": networks}
+                                
+                        update_payload["scheduler"] = {
+                            "well_recharge_delay_sec": well_recharge_sec
+                        }
+                        
+                        config.update_config(update_payload)
+                        print(" HUB configurations updated from MQTT successfully.")
+                    except Exception as config_err:
+                        print("Error processing config update on HUB:", config_err)
+                return
+            
             command = data.get("cmd") or data.get("command") or data.get("state")
             routing_path = payload.get("route", {}).get("hops", [])
             args = data
@@ -405,6 +440,7 @@ def mqtt_thread(heartbeats=None):
     # The hub's own command topic, using the new namespaced format
     cmd_topic = f"{site}/{group}/{client_type}/{client_id}/command"
     status_topic = f"{site}/{group}/{client_type}/{client_id}/status"
+    config_topic = f"{site}/{group}/{client_type}/{client_id}/config"
     telemetry_interval = mqtt_cfg.get("telemetry_interval_sec", 30)
     
     last_telemetry_time = 0
@@ -463,10 +499,11 @@ def mqtt_thread(heartbeats=None):
                 
                 # Subscribe to command topics
                 _client.subscribe(cmd_topic.encode('utf-8'))
+                _client.subscribe(config_topic.encode('utf-8'))
                 # Subscribe to all pump and valve commands using the new namespaced format
                 _client.subscribe(b"+/+/pump/+/command")
                 _client.subscribe(b"+/+/valve/+/command")
-                print(f" Subscribed to namespaced command topics: {cmd_topic}, +/+/pump/+/command, ...")
+                print(f" Subscribed to namespaced command topics: {cmd_topic}, {config_topic}, ...")
 
                 if hasattr(_client, 'sock') and _client.sock:
                     try:
