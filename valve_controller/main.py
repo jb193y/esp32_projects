@@ -20,21 +20,48 @@ next_telemetry_delay = 30
 _cmd_queue = []
 
 def save_valve_states():
+    """Saves valve states to both RTC memory (for zero-wear deep sleep) and flash file."""
     try:
         import ujson
         states = {vid: v["state"] for vid, v in valves.items()}
+        
+        # 1. RTC Slow Memory (survives deep sleep, 0 flash wear)
+        try:
+            rtc = machine.RTC()
+            rtc.memory(ujson.dumps(states))
+        except Exception as rtc_err:
+            pass
+            
+        # 2. Flash file (for cold boot / complete power loss recovery)
         with open("valve_states.json", "w") as f:
             ujson.dump(states, f)
     except Exception as e:
         print(" Failed to save valve states:", e)
 
 def load_valve_states():
+    """Loads valve states prioritizing RTC memory, falling back to flash."""
+    # 1. Check RTC Slow Memory first
+    try:
+        import ujson
+        rtc = machine.RTC()
+        data = rtc.memory()
+        if data:
+            states = ujson.loads(data)
+            if isinstance(states, dict) and states:
+                print(" Restored valve states from RTC memory:", states)
+                return states
+    except Exception:
+        pass
+
+    # 2. Fallback to flash file
     try:
         import ujson
         import os
         if "valve_states.json" in os.listdir():
             with open("valve_states.json", "r") as f:
-                return ujson.load(f)
+                states = ujson.load(f)
+                print(" Restored valve states from flash storage:", states)
+                return states
     except Exception as e:
         print(" Failed to load valve states:", e)
     return {}
@@ -99,74 +126,88 @@ def pulse_solenoid(valve_id="1", open_pulse=True):
     save_valve_states()
     print(f" Solenoid Valve {valve_id} Action complete. State: {valve['state']}")
 
-def handle_hub_commands(cmd, args):
-    # Non-blocking: just enqueue the command for the main loop to execute.
-    # This keeps the ESP-NOW receive thread free to accept the next packet
-    # immediately, preventing dropped commands during solenoid pulses.
-    print(f" Queuing command: {cmd} with args: {args}")
-    _cmd_queue.append((cmd, args))
+def handle_hub_commands(packet, sender_mac):
+    """
+    Called from espnow_client listener thread when a message arrives from the Hub.
+    """
+    msg_type = packet.get("msg_type")
+    data = packet.get("data", {})
+    
+    print(f" Received from Hub ({msg_type}): {data}")
+    
+    if msg_type in ("CMD", "COMMAND"):
+        cmd = data.get("cmd") or data.get("command")
+        # Enqueue for non-blocking execution in the main loop
+        _cmd_queue.append((cmd, data, sender_mac))
+    elif msg_type == "ACK":
+        status_val = data.get("status")
+        if status_val == "sleep_ok":
+            print(" Hub returned SLEEP_OK.")
+        else:
+            print(" Hub ACK:", status_val)
 
-
-def execute_command(cmd, args):
-    """Called from the main loop — safe to block here."""
-    print(f" Executing command: {cmd} with args: {args}")
-
-    valve_id = "1"
-    sender_mac = None
-    if isinstance(args, dict):
-        state_dict = args.get("state")
-        if not isinstance(state_dict, dict):
-            state_dict = {}
-        valve_id = str(args.get("valve_id") or state_dict.get("valve_id") or "1")
-        sender_mac = args.get("sender_mac")
-    elif isinstance(args, str):
-        try:
-            import ujson
-            parsed = ujson.loads(args)
-            state_dict = parsed.get("state")
-            if not isinstance(state_dict, dict):
-                state_dict = {}
-            valve_id = str(parsed.get("valve_id") or state_dict.get("valve_id") or "1")
-            sender_mac = parsed.get("sender_mac")
-        except:
-            pass
-
-    if cmd == "VALVE_OPEN":
+def execute_command(cmd, args, sender_mac=None):
+    if not cmd:
+        return
+        
+    print(f" Executing Hub command: {cmd} with args: {args}")
+    
+    if cmd == "OPEN_VALVE":
+        valve_id = str(args.get("valve_id", "1"))
         pulse_solenoid(valve_id, open_pulse=True)
         espnow_client.send_ack_or_tele_to_hub("ACK", {
             "valve_id": valve_id,
+            "status": "OPENED",
             "valves": {vid: v["state"] for vid, v in valves.items()},
-            "node_status": "active"
+            "node_status": "watering"
         }, target_mac=sender_mac)
 
-    elif cmd == "VALVE_CLOSE":
+    elif cmd == "CLOSE_VALVE":
+        valve_id = str(args.get("valve_id", "1"))
         pulse_solenoid(valve_id, open_pulse=False)
+        any_open = any(v.get("state") == "OPEN" for v in valves.values())
         espnow_client.send_ack_or_tele_to_hub("ACK", {
             "valve_id": valve_id,
+            "status": "CLOSED",
             "valves": {vid: v["state"] for vid, v in valves.items()},
-            "node_status": "active"
+            "node_status": "watering" if any_open else "valve_idle"
         }, target_mac=sender_mac)
 
-    elif cmd == "VALVE_ENABLE":
-        valve = valves.get(valve_id)
-        if valve:
-            valve["enabled"] = True
-            save_valve_states()
+    elif cmd == "SET_VALVES":
+        # Bulk valve state update, e.g. {"valves": {"1": "OPEN", "2": "CLOSED"}}
+        target_states = args.get("valves", {})
+        if isinstance(target_states, dict):
+            for vid, target_state in target_states.items():
+                if str(vid) in valves:
+                    if target_state.upper() == "OPEN":
+                        pulse_solenoid(str(vid), open_pulse=True)
+                    elif target_state.upper() == "CLOSED":
+                        pulse_solenoid(str(vid), open_pulse=False)
+            
+            any_open = any(v.get("state") == "OPEN" for v in valves.values())
+            espnow_client.send_ack_or_tele_to_hub("ACK", {
+                "status": "VALVES_UPDATED",
+                "valves": {vid: v["state"] for vid, v in valves.items()},
+                "node_status": "watering" if any_open else "valve_idle"
+            }, target_mac=sender_mac)
+
+    elif cmd == "CLOSE_ALL_VALVES":
+        for vid in valves.keys():
+            pulse_solenoid(vid, open_pulse=False)
         espnow_client.send_ack_or_tele_to_hub("ACK", {
-            "valve_id": valve_id,
-            "status": "ENABLED",
+            "status": "ALL_CLOSED",
             "valves": {vid: v["state"] for vid, v in valves.items()},
-            "node_status": "active"
+            "node_status": "valve_idle"
         }, target_mac=sender_mac)
 
-    elif cmd == "VALVE_DISABLE":
-        valve = valves.get(valve_id)
-        if valve:
-            valve["enabled"] = False
-            if valve.get("state") == "OPEN":
-                pulse_solenoid(valve_id, open_pulse=False)
-            valve["state"] = "DISABLED"
+    elif cmd == "DISABLE_VALVE":
+        valve_id = str(args.get("valve_id", "1"))
+        if valve_id in valves:
+            pulse_solenoid(valve_id, open_pulse=False)
+            valves[valve_id]["state"] = "FAULT"
+            update_valve_leds(valve_id)
             save_valve_states()
+            
         espnow_client.send_ack_or_tele_to_hub("ACK", {
             "valve_id": valve_id,
             "status": "DISABLED",
@@ -175,31 +216,30 @@ def execute_command(cmd, args):
         }, target_mac=sender_mac)
 
     elif cmd == "GET_STATUS":
+        any_open = any(v.get("state") == "OPEN" for v in valves.values())
         espnow_client.send_ack_or_tele_to_hub("ACK", {
             "valves": {vid: v["state"] for vid, v in valves.items()},
-            "node_status": "active"
+            "node_status": "watering" if any_open else "valve_idle"
         }, target_mac=sender_mac)
 
     elif cmd in ("BLINK_LED", "COM_TEST"):
-        print("Visual COM_TEST / BLINK_LED triggered on Valve Controller!")
-        def _blink_valve_bg():
-            try:
-                prev_status = getattr(led_status, "_state", "VALVE_CLOSED")
-                led_status.set_status("BLE_PROVISIONING")
-                time.sleep(3)
-                led_status.set_status(prev_status)
-                espnow_client.send_ack_or_tele_to_hub("ACK", {
-                    "status": "BLINK_COMPLETE",
-                    "cmd": cmd,
-                    "valves": {vid: v["state"] for vid, v in valves.items()},
-                    "node_status": "active"
-                }, target_mac=sender_mac)
-            except Exception as e:
-                print("Blink LED error:", e)
-        _thread.start_new_thread(_blink_valve_bg, ())
+        print(" Visual COM_TEST / BLINK_LED triggered on Valve Controller!")
+        try:
+            prev_status = getattr(led_status, "_state", "VALVE_CLOSED")
+            led_status.set_status("BLE_PROVISIONING")
+            time.sleep(1.5)
+            led_status.set_status(prev_status)
+            espnow_client.send_ack_or_tele_to_hub("ACK", {
+                "status": "BLINK_COMPLETE",
+                "cmd": cmd,
+                "valves": {vid: v["state"] for vid, v in valves.items()},
+                "node_status": "active"
+            }, target_mac=sender_mac)
+        except Exception as e:
+            print("Blink LED error:", e)
 
     elif cmd == "OTA":
-        print("🚀 OTA command received! Initiating firmware update...")
+        print(" OTA command received! Initiating firmware update...")
         try:
             try:
                 espnow_client._e.active(False)
@@ -212,7 +252,7 @@ def execute_command(cmd, args):
             if not wifi_networks:
                 raise Exception("No Wi-Fi credentials in config.json")
                 
-            print("📡 Connecting to Wi-Fi...")
+            print(" Connecting to Wi-Fi...")
             if not network_manager.connect():
                 raise Exception("Failed to connect to Wi-Fi")
                 
@@ -236,19 +276,18 @@ def execute_command(cmd, args):
             fw_ver = args_dict.get("version") or client_info.get("firmware_version", "valve_v1.0.0")
             base_url = ota_url.rstrip('/')
             
-            print(f"📡 Downloading manifest from: {base_url}/{manifest_name}")
+            print(f" Downloading manifest from: {base_url}/{manifest_name}")
             manifest = ota.fetch_manifest(base_url, manifest_name)
             
-            print("💾 Staging files...")
+            print(" Staging files...")
             if ota.ota_update(base_url, manifest=manifest):
-                print("🎉 OTA Successful! Rebooting...")
+                print(" OTA Successful! Rebooting...")
                 config.update_config({"client": {"firmware_version": fw_ver}})
                 time.sleep(1)
-                import machine
                 machine.reset()
         except Exception as ota_err:
-            print("❌ OTA failed:", ota_err)
-            import machine
+            print(" OTA failed:", ota_err)
+            time.sleep(1)
             machine.reset()
 
 def main():
@@ -295,8 +334,7 @@ def main():
     elif isinstance(valves_cfg, dict):
         valves_map = valves_cfg
 
-
-    # Load previously saved states to prevent out-of-sync states on reboot
+    # Load previously saved states from RTC memory or flash
     saved_states = load_valve_states()
 
     # Initialize all valves
@@ -327,56 +365,86 @@ def main():
     
     # Initialize ESP-NOW client
     espnow_client.init_espnow_client()
-    if cfg.get("client", {}).get("espnow_broadcast_only", False):
-        # Leave the radio quiet after pairing so the hub can return to recv().
-        last_telemetry_time = time.time() + 2
     
-    # Start receiver and sender threads
-    heartbeats = {"esp_now": time.time()}
-    _thread.start_new_thread(espnow_client.client_tx_loop, ())
-    _thread.start_new_thread(espnow_client.client_listen_loop, (heartbeats, handle_hub_commands))
-    
-    print(" Valve Node ready and running loop.")
-    
-    while True:
-        try:
-            gc.collect()
+    # Check if Deep Sleep is enabled
+    deep_sleep_enabled = client_cfg.get("deep_sleep_enabled", True)
+    deep_sleep_sec = int(client_cfg.get("deep_sleep_sec", 30))
 
-            # Drain command queue — execute one command per loop tick
+    if deep_sleep_enabled:
+        print(f" [Power Mode] Deep Sleep Enabled (Sleep interval: {deep_sleep_sec}s)")
+        
+        # Start background threads for fast message exchange
+        heartbeats = {"esp_now": time.time()}
+        _thread.start_new_thread(espnow_client.client_tx_loop, ())
+        _thread.start_new_thread(espnow_client.client_listen_loop, (heartbeats, handle_hub_commands))
+        
+        # 1. Send Check-In / Telemetry to Hub
+        any_open = any(v.get("state") == "OPEN" for v in valves.values())
+        node_status = "watering" if any_open else "valve_idle"
+        telemetry = {
+            "status": node_status,
+            "valves": {vid: v["state"] for vid, v in valves.items()},
+            "rssi": -50,
+            "sleep_sec": deep_sleep_sec
+        }
+        espnow_client.send_ack_or_tele_to_hub("TELE", telemetry)
+        print(" Check-In Telemetry sent to Hub. Listening for commands...")
+
+        # 2. Wait up to 600ms for incoming Hub response / mailbox commands
+        start_wait = time.time()
+        while time.time() - start_wait < 0.6:
             if _cmd_queue:
-                cmd, args = _cmd_queue.pop(0)
-                execute_command(cmd, args)
+                cmd, args, sender_mac = _cmd_queue.pop(0)
+                execute_command(cmd, args, sender_mac)
+                # Wait briefly for ACK packet transmission to complete
+                time.sleep_ms(150)
+                break
+            time.sleep_ms(20)
 
-            # Send periodic telemetry if paired
-            if espnow_client.is_paired():
-                now = time.time()
-                random_test = client_cfg.get("espnow_random_test", False)
-                send_interval = next_telemetry_delay
-                if now - last_telemetry_time >= send_interval:
-                    last_telemetry_time = now
-                    any_open = any(v.get("state") == "OPEN" for v in valves.values())
-                    node_status = "watering" if any_open else "valve_idle"
-                    telemetry = {
-                        "status": node_status,
-                        "valves": {vid: v["state"] for vid, v in valves.items()},
-                        "rssi": -50
-                    }
-                    if random_test:
-                        telemetry["test_seq"] = random.randint(1, 9999)
-                        telemetry["test_value"] = random.randint(0, 100)
-                        next_telemetry_delay = random.randint(
-                        client_cfg.get("espnow_random_min_sec", 5),
-                        client_cfg.get("espnow_random_max_sec", 15)
-                        )
-                    else:
-                        next_telemetry_delay = 30
-                    espnow_client.send_ack_or_tele_to_hub("TELE", telemetry)
+        # 3. Enter Deep Sleep
+        print(f" Going to Deep Sleep for {deep_sleep_sec}s. Goodnight!")
+        time.sleep_ms(50)
+        try:
+            espnow_client.stop_client()
+        except:
+            pass
+        machine.deepsleep(deep_sleep_sec * 1000)
 
-            time.sleep_ms(100)
+    else:
+        # Continuous Running Loop (Non-sleep mode)
+        print(" [Power Mode] Continuous Loop Active (Deep sleep disabled).")
+        heartbeats = {"esp_now": time.time()}
+        _thread.start_new_thread(espnow_client.client_tx_loop, ())
+        _thread.start_new_thread(espnow_client.client_listen_loop, (heartbeats, handle_hub_commands))
+        
+        while True:
+            try:
+                gc.collect()
 
-        except Exception as err:
-            print(" Valve Loop Error:", err)
-            time.sleep(1)
+                # Drain command queue
+                if _cmd_queue:
+                    cmd, args, sender_mac = _cmd_queue.pop(0)
+                    execute_command(cmd, args, sender_mac)
+
+                # Send periodic telemetry
+                if espnow_client.is_paired():
+                    now = time.time()
+                    if now - last_telemetry_time >= next_telemetry_delay:
+                        last_telemetry_time = now
+                        any_open = any(v.get("state") == "OPEN" for v in valves.values())
+                        node_status = "watering" if any_open else "valve_idle"
+                        telemetry = {
+                            "status": node_status,
+                            "valves": {vid: v["state"] for vid, v in valves.items()},
+                            "rssi": -50
+                        }
+                        espnow_client.send_ack_or_tele_to_hub("TELE", telemetry)
+
+                time.sleep_ms(100)
+
+            except Exception as err:
+                print(" Valve Loop Error:", err)
+                time.sleep(1)
             
 try:
     main()
@@ -385,7 +453,7 @@ except KeyboardInterrupt:
     try:
         espnow_client.stop_client()
     except Exception as stop_err:
-        print(" ESP-NOW stop notice:", stop_err)
+        pass
     print(" Valve Controller stopped")
 except Exception as e:
     print(" Main loop error:", e)

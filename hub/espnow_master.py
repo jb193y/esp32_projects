@@ -23,6 +23,47 @@ registered_peers = []
 tx_queue = config.Queue()
 rx_queue = config.Queue()
 
+# Node Command Mailbox for sleep/polling nodes (target_mac -> list of {msg_dict, routing_path, target_id, expires_at})
+_node_mailbox = {}
+MAILBOX_TTL_SEC = 600
+
+def enqueue_mailbox_command(target_mac_str, msg_dict, routing_path=None, target_id=None, ttl_sec=MAILBOX_TTL_SEC):
+    global _node_mailbox
+    now = time.time()
+    mac_key = target_mac_str.lower()
+    if mac_key not in _node_mailbox:
+        _node_mailbox[mac_key] = []
+    
+    # Remove expired commands
+    _node_mailbox[mac_key] = [item for item in _node_mailbox[mac_key] if item["expires_at"] > now]
+    
+    _node_mailbox[mac_key].append({
+        "msg_dict": msg_dict,
+        "routing_path": routing_path,
+        "target_id": target_id,
+        "expires_at": now + ttl_sec
+    })
+    print(f" [Mailbox] Enqueued command for {target_mac_str} (queue length: {len(_node_mailbox[mac_key])})")
+
+def pop_mailbox_command(target_mac_str):
+    global _node_mailbox
+    now = time.time()
+    mac_key = target_mac_str.lower()
+    if mac_key not in _node_mailbox:
+        return None
+    
+    # Filter out expired items
+    valid_items = [item for item in _node_mailbox[mac_key] if item["expires_at"] > now]
+    if not valid_items:
+        _node_mailbox.pop(mac_key, None)
+        return None
+    
+    item = valid_items.pop(0)
+    _node_mailbox[mac_key] = valid_items
+    if not valid_items:
+        _node_mailbox.pop(mac_key, None)
+    return item
+
 def reregister_peers(e):
     print(f" Re-registering {len(registered_peers)} peers...")
     for mac_str in registered_peers:
@@ -314,10 +355,14 @@ def dispatch_command_from_mqtt(target_node, command, routing_path, args):
     else:
         payload = {"cmd": command}
         payload.update(args)
-        send_espnow_msg(target_mac_str, {
+        cmd_msg = {
             "msg_type": "COMMAND",
             "payload": payload
-        }, mac_routing_path, target_id=target_node)
+        }
+        # 1. Enqueue in mailbox for sleep/polling nodes
+        enqueue_mailbox_command(target_mac_str, cmd_msg, mac_routing_path, target_id=target_node)
+        # 2. Also send directly in case the node is currently awake
+        send_espnow_msg(target_mac_str, cmd_msg, mac_routing_path, target_id=target_node)
 
 def hub_tx_loop():
     global _e
@@ -566,22 +611,34 @@ def hub_rx_processor_loop():
                     return_hops.append(hop)
                 return_hops.append(original_sender_mac)
 
-                # Send ESP-NOW ACK back to the client via the reverse path
+                # Check if this node has a pending command in the mailbox to deliver
+                pending_cmd = pop_mailbox_command(original_sender_mac) or pop_mailbox_command(sender_mac_str)
                 try:
-                    send_espnow_msg(
-                        target_mac_str=return_hops[0],
-                        msg_dict={
-                            "msg_type": "ACK",
-                            "payload": {
-                                "status": "received",
-                                "topic": tele_topic
-                            }
-                        },
-                        routing_path=return_hops,
-                        target_id=device_id
-                    )
+                    if pending_cmd:
+                        print(f" [Hub Mailbox] Delivering pending command to waking node {original_sender_mac}")
+                        send_espnow_msg(
+                            target_mac_str=return_hops[0],
+                            msg_dict=pending_cmd["msg_dict"],
+                            routing_path=return_hops,
+                            target_id=device_id
+                        )
+                    else:
+                        # Send ESP-NOW ACK with SLEEP_OK so deep-sleeping nodes can immediately sleep
+                        send_espnow_msg(
+                            target_mac_str=return_hops[0],
+                            msg_dict={
+                                "msg_type": "ACK",
+                                "payload": {
+                                    "status": "sleep_ok",
+                                    "sleep_sec": 30,
+                                    "topic": tele_topic
+                                }
+                            },
+                            routing_path=return_hops,
+                            target_id=device_id
+                        )
                 except Exception as ack_err:
-                    print(" [Hub] Telemetry ACK send error:", ack_err)
+                    print(" [Hub] Response delivery error:", ack_err)
 
             elif msg_type == "ACK":
                 site = cfg.get("client", {}).get("site", "default_site")

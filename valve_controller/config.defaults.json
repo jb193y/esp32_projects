@@ -6,7 +6,9 @@
     "controller_type": "YD-ESP32-S3 2022-V1.3",
     "board_type": "YD-ESP32-S3 2022-V1.3",
     "firmware_version": "valve_v1.0.0",
-    "mode": "ble_setup"
+    "mode": "ble_setup",
+    "deep_sleep_enabled": true,
+    "deep_sleep_sec": 30
   },
   "hub": {
     "mac": "00:00:00:00:00:00"
