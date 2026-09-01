@@ -305,9 +305,12 @@ def on_message(topic, msg):
                 "command": command
             }
         }
-        publish_msg(f"{topic_str}/response", resp_payload)
-        publish_msg(f"farm/{client_id}/command_response", resp_payload)
-        print(f"Published RECEIVED_BY_HUB ACK for {target_device}:{command}")
+        if topic_str.endswith("/command"):
+            ack_topic = topic_str[:-8] + "/acks"
+        else:
+            ack_topic = f"{topic_str}/acks"
+        publish_msg(ack_topic, resp_payload)
+        print(f"Published RECEIVED_BY_HUB ACK for {target_device}:{command} to {ack_topic}")
 
         if target_device == client_id:
             if command in ("UPDATE_SCHEDULE", "ADD_SCHEDULE"):

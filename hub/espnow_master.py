@@ -270,7 +270,10 @@ def dispatch_command_from_mqtt(target_node, command, routing_path, args):
                 "hub_id": client_id
             }
         }
-        mqtt_client.publish_msg(f"farm/{client_id}/command_response", fwd_payload)
+        site = cfg.get("client", {}).get("site", "default_site")
+        group = cfg.get("client", {}).get("group", "all")
+        if site != "default_site":
+            mqtt_client.publish_msg(f"{site}/{group}/all/acks", fwd_payload)
 
         payload = {"cmd": command}
         payload.update(args)
@@ -323,8 +326,10 @@ def dispatch_command_from_mqtt(target_node, command, routing_path, args):
             "hub_id": client_id
         }
     }
-    mqtt_client.publish_msg(f"{node_type}/{node_id_slug}/command/response", fwd_payload)
-    mqtt_client.publish_msg(f"farm/{client_id}/command_response", fwd_payload)
+    site = cfg.get("client", {}).get("site", "default_site")
+    group = cfg.get("client", {}).get("group", "all")
+    if site != "default_site":
+        mqtt_client.publish_msg(f"{site}/{group}/{node_type}/{node_id_slug}/acks", fwd_payload)
 
     # Translate logical node IDs in routing_path to MAC addresses
     mac_routing_path = []
@@ -670,9 +675,7 @@ def hub_rx_processor_loop():
                     hops=packet.get("hops", []),
                     timestamp=packet.get("raw", {}).get("timestamp", int(config.get_unix_time()))
                 )
-                mqtt_client.publish_msg(f"{site}/{group}/{node_type}/{device_id}/command/response", mqtt_payload)
                 mqtt_client.publish_msg(f"{site}/{group}/{node_type}/{device_id}/acks", mqtt_payload)
-                mqtt_client.publish_msg(f"farm/{client_id}/command_response", mqtt_payload)
 
             elif msg_type in ("ALERT", "ALERTS"):
                 site = cfg.get("client", {}).get("site", "default_site")
