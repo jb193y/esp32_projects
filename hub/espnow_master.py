@@ -956,12 +956,13 @@ def espnow_receiver_thread(heartbeats=None):
     print(" ESP-NOW Master Receiver Thread Started")
 
     sta = network.WLAN(network.STA_IF)
-    try:
-        sta.active(True)
+    if not sta.active():
         try:
-            sta.config(pm=network.WLAN.PM_NONE)
-        except:
-            pass
+            sta.active(True)
+        except Exception as sta_err:
+            print("STA active notice:", sta_err)
+    try:
+        sta.config(pm=network.WLAN.PM_NONE)
     except:
         pass
 

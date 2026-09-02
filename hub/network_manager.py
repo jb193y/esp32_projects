@@ -57,7 +57,11 @@ def wan_thread(heartbeats=None):
     cfg = config.load_config()
     networks = cfg.get("wifi", {}).get("networks", [])
     wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
+    if not wlan.active():
+        try:
+            wlan.active(True)
+        except Exception as act_ex:
+            print("WLAN activation notice:", act_ex)
     try:
         wlan.config(pm=network.WLAN.PM_NONE)
     except:

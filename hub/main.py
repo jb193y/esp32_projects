@@ -27,21 +27,36 @@ heartbeats = {
 def main():
     print("Hub Master Controller Loading...")
     
-    # Set default thread stack size to 8KB before starting any thread to prevent stack overflow
+    # 1. Early Wi-Fi initialization to secure contiguous DMA memory from ESP-IDF
     try:
-        _thread.stack_size(8192)
-        print("Default thread stack size configured to 8KB")
+        import network
+        sta = network.WLAN(network.STA_IF)
+        if not sta.active():
+            sta.active(True)
+        try:
+            sta.config(pm=network.WLAN.PM_NONE)
+        except Exception:
+            pass
+    except Exception as wlan_early_err:
+        print("Early WLAN init notice:", wlan_early_err)
+
+    gc.collect()
+
+    # 2. Configure default thread stack size to 4KB (saves ~30KB RAM over 8KB)
+    try:
+        _thread.stack_size(4096)
+        print("Default thread stack size configured to 4KB")
     except Exception as ex:
         print("Failed to configure thread stack size:", ex)
     
-    # 1. Start Status LED
+    # 3. Start Status LED
     _thread.start_new_thread(led_status.led_thread, ())
-    time.sleep(0.5)
+    time.sleep_ms(200)
     
-    # 1.5 Start Factory Reset monitor
+    # 4. Start Factory Reset monitor (runs on hardware Timer with 0 thread overhead)
     factory_reset.start()
     
-    # 2. Check if device is configured
+    # 5. Check if device is configured
     cfg_exists = "config.json" in os.listdir()
     cfg = None
     if cfg_exists:
@@ -66,11 +81,12 @@ def main():
         ble_manager.start_provisioning()
         return
         
-    # 3. Start Normal Operations (STA Mode)
+    # 6. Start Normal Operations (STA Mode)
     print("Booting into STA normal operations...")
     led_status.set_status("WIFI_CONNECTING")
+    gc.collect()
     
-    # Launch only the services needed for the ESP-NOW transport test.
+    # Launch services with staggered delays to allow clean FreeRTOS task allocation
     if espnow_only:
         print("ESP-NOW-only test mode: WAN, MQTT, and scheduler disabled")
         heartbeats.pop("network", None)
@@ -80,14 +96,20 @@ def main():
     else:
         mqtt_client.register_cmd_dispatcher(espnow_master.dispatch_command_from_mqtt)
         _thread.start_new_thread(network_manager.wan_thread, (heartbeats,))
+        time.sleep_ms(150)
         _thread.start_new_thread(mqtt_client.mqtt_thread, (heartbeats,))
+        time.sleep_ms(150)
 
     receiver_fn = (espnow_master.espnow_test_receiver_thread
                    if espnow_only else espnow_master.espnow_receiver_thread)
     _thread.start_new_thread(receiver_fn, (heartbeats,))
+    time.sleep_ms(150)
+
     if not espnow_only:
         _thread.start_new_thread(scheduler.scheduler_thread, (heartbeats, espnow_master.send_espnow_msg))
-    print("All Hub systems active!")
+    
+    gc.collect()
+    print("All Hub systems active! Free heap:", gc.mem_free())
     
     last_checked_system_time = time.time()
     while True:
