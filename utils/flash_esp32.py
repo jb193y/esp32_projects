@@ -81,20 +81,29 @@ def get_device_files_metadata(mpremote, port):
         print(f"Error: Error decoding device files JSON: {e}")
         return None
 
-def reset_esp32_via_serial(port):
-    """Pulse DTR/RTS lines to physically reset the ESP32 out of deep sleep into boot.py."""
+def prepare_esp32_connection(port):
+    """Reset the ESP32 out of deep sleep and interrupt boot.py to halt at REPL prompt."""
     try:
         import serial
         import time
         ser = serial.Serial(port, 115200, timeout=1)
+        # 1. Hardware reset pulse via RTS/DTR
         ser.rts = False
         ser.dtr = False
         time.sleep(0.05)
-        ser.rts = True   # Trigger reset
+        ser.rts = True
         time.sleep(0.2)
-        ser.rts = False  # Release reset
-        time.sleep(0.5)
+        ser.rts = False
+        time.sleep(0.3)
+        
+        # 2. Stream Ctrl-C interrupts to break boot.py safe boot delay and stop execution
+        for _ in range(10):
+            ser.write(b'\x03')
+            time.sleep(0.1)
+            
+        ser.reset_input_buffer()
         ser.close()
+        time.sleep(0.4)
     except Exception:
         pass
 
@@ -114,16 +123,21 @@ def main():
 
     target_dir = os.path.join(project_root, args.type)
     
-    # --- 1. Wake / Reset ESP32 if sleeping ---
-    print(f"Connecting to ESP32 on {args.port} (waking if sleeping)...")
-    reset_esp32_via_serial(args.port)
+    # --- 1. Wake / Interrupt ESP32 into REPL ---
+    print(f"Connecting to ESP32 on {args.port} (waking & interrupting)...")
+    prepare_esp32_connection(args.port)
 
     # --- 2. Query Device Files for Sync & Cleanup ---
     print(f"Scanning ESP32 device filesystem on {args.port}...")
     device_files = get_device_files_metadata(mpremote, args.port)
     if device_files is None:
-        print("[ERROR] Device connection failed. Aborting sync.")
-        sys.exit(1)
+        # Retry connection once more if the port was slow to stabilize
+        print(f"Retrying connection to {args.port}...")
+        prepare_esp32_connection(args.port)
+        device_files = get_device_files_metadata(mpremote, args.port)
+        if device_files is None:
+            print("[ERROR] Device connection failed. Aborting sync.")
+            sys.exit(1)
     
     # Compile the set of local files we expect to find on the device
     expected_files = {}
