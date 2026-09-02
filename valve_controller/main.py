@@ -152,68 +152,45 @@ def execute_command(cmd, args, sender_mac=None):
         
     print(f" Executing Hub command: {cmd} with args: {args}")
     
-    if cmd == "OPEN_VALVE":
-        valve_id = str(args.get("valve_id", "1"))
-        pulse_solenoid(valve_id, open_pulse=True)
-        espnow_client.send_ack_or_tele_to_hub("ACK", {
-            "valve_id": valve_id,
-            "status": "OPENED",
-            "valves": {vid: v["state"] for vid, v in valves.items()},
-            "node_status": "watering"
-        }, target_mac=sender_mac)
-
-    elif cmd == "CLOSE_VALVE":
-        valve_id = str(args.get("valve_id", "1"))
-        pulse_solenoid(valve_id, open_pulse=False)
+    if cmd == "SET_VALVES":
+        # Target states can be passed as {"valves": {...}} or directly as {...}
+        target_states = args.get("valves") if (isinstance(args, dict) and "valves" in args) else args
+        
+        if isinstance(target_states, dict):
+            # Check for global ALL or '0' shortcut (e.g. {"ALL": "CLOSED"} or {"0": "OPEN"})
+            global_action = target_states.get("ALL") or target_states.get("all") or target_states.get("0")
+            if global_action:
+                open_pulse = (str(global_action).upper() == "OPEN")
+                for vid in valves.keys():
+                    pulse_solenoid(vid, open_pulse=open_pulse)
+            else:
+                for vid, target_state in target_states.items():
+                    if str(vid) in valves:
+                        pulse_solenoid(str(vid), open_pulse=(str(target_state).upper() == "OPEN"))
+        
         any_open = any(v.get("state") == "OPEN" for v in valves.values())
         espnow_client.send_ack_or_tele_to_hub("ACK", {
-            "valve_id": valve_id,
-            "status": "CLOSED",
+            "status": "VALVES_UPDATED",
             "valves": {vid: v["state"] for vid, v in valves.items()},
             "node_status": "watering" if any_open else "valve_idle"
         }, target_mac=sender_mac)
 
-    elif cmd == "SET_VALVES":
-        # Bulk valve state update, e.g. {"valves": {"1": "OPEN", "2": "CLOSED"}}
-        target_states = args.get("valves", {})
-        if isinstance(target_states, dict):
-            for vid, target_state in target_states.items():
-                if str(vid) in valves:
-                    if target_state.upper() == "OPEN":
-                        pulse_solenoid(str(vid), open_pulse=True)
-                    elif target_state.upper() == "CLOSED":
-                        pulse_solenoid(str(vid), open_pulse=False)
-            
+    elif cmd == "COM_TEST":
+        print(" Visual COM_TEST triggered on Valve Controller!")
+        try:
+            prev_status = getattr(led_status, "_state", "VALVE_CLOSED")
+            led_status.set_status("BLE_PROVISIONING")
+            time.sleep(1.5)
+            led_status.set_status(prev_status)
             any_open = any(v.get("state") == "OPEN" for v in valves.values())
             espnow_client.send_ack_or_tele_to_hub("ACK", {
-                "status": "VALVES_UPDATED",
+                "status": "COM_TEST_OK",
+                "cmd": "COM_TEST",
                 "valves": {vid: v["state"] for vid, v in valves.items()},
                 "node_status": "watering" if any_open else "valve_idle"
             }, target_mac=sender_mac)
-
-    elif cmd == "CLOSE_ALL_VALVES":
-        for vid in valves.keys():
-            pulse_solenoid(vid, open_pulse=False)
-        espnow_client.send_ack_or_tele_to_hub("ACK", {
-            "status": "ALL_CLOSED",
-            "valves": {vid: v["state"] for vid, v in valves.items()},
-            "node_status": "valve_idle"
-        }, target_mac=sender_mac)
-
-    elif cmd == "DISABLE_VALVE":
-        valve_id = str(args.get("valve_id", "1"))
-        if valve_id in valves:
-            pulse_solenoid(valve_id, open_pulse=False)
-            valves[valve_id]["state"] = "FAULT"
-            update_valve_leds(valve_id)
-            save_valve_states()
-            
-        espnow_client.send_ack_or_tele_to_hub("ACK", {
-            "valve_id": valve_id,
-            "status": "DISABLED",
-            "valves": {vid: v["state"] for vid, v in valves.items()},
-            "node_status": "active"
-        }, target_mac=sender_mac)
+        except Exception as e:
+            print("COM_TEST error:", e)
 
     elif cmd == "GET_STATUS":
         any_open = any(v.get("state") == "OPEN" for v in valves.values())
@@ -222,21 +199,43 @@ def execute_command(cmd, args, sender_mac=None):
             "node_status": "watering" if any_open else "valve_idle"
         }, target_mac=sender_mac)
 
-    elif cmd in ("BLINK_LED", "COM_TEST"):
-        print(" Visual COM_TEST / BLINK_LED triggered on Valve Controller!")
+    elif cmd == "SET_CONFIG":
+        print(" SET_CONFIG command received:", args)
         try:
-            prev_status = getattr(led_status, "_state", "VALVE_CLOSED")
-            led_status.set_status("BLE_PROVISIONING")
-            time.sleep(1.5)
-            led_status.set_status(prev_status)
+            config_payload = args.get("config") or args.get("settings") or args
+            if isinstance(config_payload, dict):
+                clean_payload = {k: v for k, v in config_payload.items() if k not in ("cmd", "command", "target", "source", "msg_type")}
+                config.update_config(clean_payload)
+                print(" Configuration updated successfully on Valve Controller.")
+            
+            any_open = any(v.get("state") == "OPEN" for v in valves.values())
             espnow_client.send_ack_or_tele_to_hub("ACK", {
-                "status": "BLINK_COMPLETE",
-                "cmd": cmd,
+                "status": "CONFIG_UPDATED",
+                "cmd": "SET_CONFIG",
                 "valves": {vid: v["state"] for vid, v in valves.items()},
-                "node_status": "active"
+                "node_status": "watering" if any_open else "valve_idle"
             }, target_mac=sender_mac)
-        except Exception as e:
-            print("Blink LED error:", e)
+            
+            if isinstance(args, dict) and args.get("reboot"):
+                time.sleep_ms(300)
+                machine.reset()
+        except Exception as cfg_err:
+            print(" SET_CONFIG failed:", cfg_err)
+
+    elif cmd == "REBOOT":
+        print(" REBOOT command received! Rebooting Valve Controller...")
+        try:
+            any_open = any(v.get("state") == "OPEN" for v in valves.values())
+            espnow_client.send_ack_or_tele_to_hub("ACK", {
+                "status": "REBOOTING",
+                "cmd": "REBOOT",
+                "valves": {vid: v["state"] for vid, v in valves.items()},
+                "node_status": "watering" if any_open else "valve_idle"
+            }, target_mac=sender_mac)
+        except Exception:
+            pass
+        time.sleep_ms(300)
+        machine.reset()
 
     elif cmd == "OTA":
         print(" OTA command received! Initiating firmware update...")

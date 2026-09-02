@@ -787,7 +787,7 @@ def espnow_test_receiver_thread(heartbeats=None):
     command_min_sec = test_cfg.get("espnow_command_min_sec", 5)
     command_max_sec = test_cfg.get("espnow_command_max_sec", 12)
     command_choices = tuple(test_cfg.get(
-        "espnow_test_commands", ["GET_STATUS", "COM_TEST", "BLINK_LED"]
+        "espnow_test_commands", ["GET_STATUS", "COM_TEST"]
     ))
     next_command_at = time.time() + random.randint(command_min_sec, command_max_sec)
     while True:

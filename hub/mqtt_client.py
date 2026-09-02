@@ -358,8 +358,8 @@ def on_message(topic, msg):
                 status_val = "Enabled" if command == "HUB_ENABLE" else "Disabled"
                 config.update_config({"client": {"status": status_val}})
                 publish_hub_telemetry(status_val)
-            elif command in ("BLINK_LED", "COM_TEST"):
-                print("Visual COM_TEST / BLINK_LED triggered on Hub!")
+            elif command == "COM_TEST":
+                print("Visual COM_TEST triggered on Hub!")
                 _thread.start_new_thread(_blink_hub_led_bg, ())
             elif command in ("START_DISCOVERY", "START_MESH_DISCOVERY"):
                 if _cmd_dispatcher:
