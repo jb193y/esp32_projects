@@ -520,7 +520,7 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
                 "msg_type": "DISCOVERY_RESP",
                 "payload": resp_payload
             }, target_id=source)
-            continue
+            return
 
         if msg_type == "PAIR_REQ" or (msg_type == "STATUS" and data.get("status") == "pairing_request"):
             node_type = data.get("node_type", "UNKNOWN")
@@ -556,7 +556,7 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
             group = cfg.get("client", {}).get("group", "all")
 
             if site == "default_site":
-                continue
+                return
 
             status_payload = message_builder.build_mqtt_payload(
                 source=device_id,
@@ -596,7 +596,7 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
             site = cfg.get("client", {}).get("site", "default_site")
             group = cfg.get("client", {}).get("group", "all")
             if site == "default_site":
-                continue
+                return
 
             nodes = load_nodes()
             
@@ -681,7 +681,7 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
             site = cfg.get("client", {}).get("site", "default_site")
             group = cfg.get("client", {}).get("group", "all")
             if site == "default_site":
-                continue
+                return
 
             nodes = load_nodes()
             node_info = nodes.get(sender_mac_str, {})
@@ -713,7 +713,7 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
             site = cfg.get("client", {}).get("site", "default_site")
             group = cfg.get("client", {}).get("group", "all")
             if site == "default_site":
-                continue
+                return
 
             nodes = load_nodes()
             node_info = nodes.get(sender_mac_str, {})
