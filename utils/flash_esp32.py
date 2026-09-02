@@ -22,34 +22,63 @@ def send_command(ser, cmd, timeout=5):
     return response
 
 def enter_raw_repl(ser):
-    """Enter raw REPL with exact proven hardware reset sequence from upload_serial.py."""
-    print("Resetting ESP32 and entering raw REPL...")
+    """Enter raw REPL, supporting both awake boards and deep-sleeping boards."""
+    print("Checking ESP32 connection state...")
+    ser.timeout = 0.5
     
-    # 1. Force hardware reset using DTR/RTS lines
+    # 1. Try immediate hardware reset via DTR/RTS (works if board is awake / powered)
     ser.rts = False
     ser.dtr = False
     ser.setRTS(False)
     ser.setDTR(False)
-    time.sleep(0.1)
+    time.sleep(0.05)
     ser.setRTS(True)
-    time.sleep(0.2)
+    time.sleep(0.15)
     ser.setRTS(False)
     time.sleep(0.2)
     ser.reset_input_buffer()
-    time.sleep(0.1)
     
-    # 2. Send Ctrl-C (0x03) interrupts to stop any running script
+    # Send quick interrupt probe
     ser.write(b'\x03\x03')
-    time.sleep(0.1)
-    ser.reset_input_buffer()
+    time.sleep(0.3)
+    quick_resp = ser.read(ser.in_waiting or 100)
     
-    # 3. Send Ctrl-A (0x01) to enter raw REPL
+    # If board responded, try entering raw REPL immediately
+    if quick_resp:
+        ser.write(b'\x01')
+        time.sleep(0.4)
+        resp = ser.read(ser.in_waiting or 200)
+        if b'raw REPL' in resp:
+            print("Connected to Raw REPL (active mode).")
+            return
+            
+    # 2. If board is in Deep Sleep, listen for timer wake-up or EN button press
+    print("Device is in Deep Sleep. Waiting for wake-up (press EN button or wait up to 30s)...")
+    start_t = time.time()
+    caught_wake = False
+    
+    while time.time() - start_t < 35:
+        ser.write(b'\x03')
+        if ser.in_waiting:
+            chunk = ser.read(ser.in_waiting)
+            if b'rst:' in chunk or b'boot' in chunk or b'ESP-ROM' in chunk or b'>>>' in chunk or b'Valve' in chunk:
+                print(f" Detected ESP32 wake-up at {time.time()-start_t:.1f}s! Catching boot window...")
+                caught_wake = True
+                # Send interrupts to break boot.py delay
+                for _ in range(6):
+                    ser.write(b'\x03\x03')
+                    time.sleep(0.1)
+                time.sleep(0.3)
+                ser.reset_input_buffer()
+                break
+        time.sleep(0.15)
+        
+    # 3. Enter raw REPL
     ser.write(b'\x01')
     time.sleep(0.5)
-    
     resp = ser.read(ser.in_waiting or 200)
+    
     if b'raw REPL' not in resp:
-        # Retry with extra interrupt
         ser.write(b'\x03\x03\x01')
         time.sleep(0.5)
         resp += ser.read(ser.in_waiting or 200)
