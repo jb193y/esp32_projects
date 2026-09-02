@@ -507,12 +507,6 @@ def mqtt_thread(heartbeats=None):
                 _client.subscribe(b"+/+/pump/+/command")
                 _client.subscribe(b"+/+/valve/+/command")
                 print(f" Subscribed to namespaced command topics: {cmd_topic}, {config_topic}, ...")
-
-                if hasattr(_client, 'sock') and _client.sock:
-                    try:
-                        _client.sock.setblocking(False)
-                    except Exception:
-                        pass
                 
                 # Publish startup status in standard envelope
                 if site != "default_site":
