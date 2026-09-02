@@ -484,7 +484,7 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
         client_id = cfg.get("client", {}).get("id", "hub_master_01")
 
         is_broadcast = target in ("00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff", "FF:FF:FF:FF:FF:FF", "broadcast")
-        is_for_us = is_broadcast or (target and target.lower() in (client_id.lower(), "hub_master_01")) or (target and target.upper() in (hub_sta_mac.upper(), hub_ap_mac.upper()))
+        is_for_us = is_broadcast or (target and ("hub" in target.lower() or target.lower() in (client_id.lower(), "hub_master_01", "hub_master_02"))) or (target and target.upper() in (hub_sta_mac.upper(), hub_ap_mac.upper()))
 
         if not is_for_us:
             return

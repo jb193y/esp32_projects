@@ -365,12 +365,29 @@ def main():
     deep_sleep_sec = int(client_cfg.get("deep_sleep_sec", 30))
 
     if deep_sleep_enabled:
-        print(f" [Power Mode] Deep Sleep Enabled (Sleep interval: {deep_sleep_sec}s)")
+        print(f" [Power Mode] Deep Sleep Configured (Sleep interval: {deep_sleep_sec}s)")
         
         # Start background threads for fast message exchange
         heartbeats = {"esp_now": time.time()}
         _thread.start_new_thread(espnow_client.client_tx_loop, ())
         _thread.start_new_thread(espnow_client.client_listen_loop, (heartbeats, handle_hub_commands))
+
+        # 0. Active Pairing Phase: If not paired, stay awake up to 45s to complete handshake
+        if not espnow_client.is_paired():
+            print(" Node uncommissioned / not paired. Entering Active Pairing Mode (staying awake)...")
+            led_status.set_status("BLE_PROVISIONING")
+            pair_start = time.time()
+            while not espnow_client.is_paired() and (time.time() - pair_start < 45):
+                if _cmd_queue:
+                    cmd, args, sender_mac = _cmd_queue.pop(0)
+                    execute_command(cmd, args, sender_mac)
+                time.sleep_ms(100)
+
+            if espnow_client.is_paired():
+                print(" Pairing successful! Transitioning to operational mode...")
+                led_status.set_status("VALVE_CLOSED")
+            else:
+                print(" Pairing window elapsed. Will re-attempt on next wake cycle.")
         
         # 1. Send Check-In / Telemetry to Hub
         any_open = any(v.get("state") == "OPEN" for v in valves.values())
@@ -384,9 +401,9 @@ def main():
         espnow_client.send_ack_or_tele_to_hub("TELE", telemetry)
         print(" Check-In Telemetry sent to Hub. Listening for commands...")
 
-        # 2. Wait up to 600ms for incoming Hub response / mailbox commands
+        # 2. Wait up to 1000ms for incoming Hub response / mailbox commands
         start_wait = time.time()
-        while time.time() - start_wait < 0.6:
+        while time.time() - start_wait < 1.0:
             if _cmd_queue:
                 cmd, args, sender_mac = _cmd_queue.pop(0)
                 execute_command(cmd, args, sender_mac)
