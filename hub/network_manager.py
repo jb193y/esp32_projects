@@ -5,13 +5,14 @@ import config
 import led_status
 
 _is_wan_connected = False
+_wlan = None
+_wan_startup_failed = False
 
 def is_connected():
-    try:
-        wlan = network.WLAN(network.STA_IF)
-        return wlan.isconnected()
-    except Exception:
-        return _is_wan_connected
+    return _is_wan_connected
+
+def startup_failed():
+    return _wan_startup_failed
 
 def connect_wifi(networks, wlan=None, timeout=15):
     if wlan is None:
@@ -49,12 +50,24 @@ def connect_wifi(networks, wlan=None, timeout=15):
     return False
 
 def wan_thread(heartbeats=None):
-    global _is_wan_connected
+    global _is_wan_connected, _wlan, _wan_startup_failed
     print("Network Manager WAN Thread Started")
     
     cfg = config.load_config()
     networks = cfg.get("wifi", {}).get("networks", [])
-    wlan = network.WLAN(network.STA_IF)
+    try:
+        wlan = network.WLAN(network.STA_IF)
+    except Exception as wlan_err:
+        _wan_startup_failed = True
+        print("Wi-Fi initialization failed:", wlan_err)
+        if "Memory" in str(wlan_err) or "0x3001" in str(wlan_err):
+            print(" Soft reboot DMA leak detected. Performing clean hardware reset...")
+            time.sleep_ms(300)
+            import machine
+            machine.reset()
+        print("Wi-Fi is unavailable; use firmware built for this board's PSRAM configuration.")
+        return
+    _wlan = wlan
     if not wlan.active():
         try:
             wlan.active(True)

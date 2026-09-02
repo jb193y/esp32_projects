@@ -92,7 +92,13 @@ def main():
         while time.time() - start_conn_wait < 6:
             if network_manager.is_connected():
                 break
+            if network_manager.startup_failed():
+                break
             time.sleep_ms(200)
+
+        if network_manager.startup_failed():
+            print("Normal operation stopped because Wi-Fi could not be initialized.")
+            return
             
         gc.collect()
         time.sleep_ms(200)

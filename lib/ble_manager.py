@@ -12,6 +12,7 @@ except ImportError:
     has_ble = False
 
 is_ble_connected = False
+_shutdown_requested = False
 pending_config = None
 ble_instance = None
 write_handle = None
@@ -73,10 +74,11 @@ def irq_handler(event, data):
             led_status.set_status("BLE_PROVISIONING")
         except:
             pass
-        try:
-            start_advertising()
-        except Exception:
-            pass
+        if not _shutdown_requested:
+            try:
+                start_advertising()
+            except Exception:
+                pass
     elif event == _IRQ_GATTS_WRITE:
         conn_handle, value_handle = data
         if value_handle == write_handle:
@@ -154,11 +156,12 @@ def update_device_config(data):
         pass
 
 def start_provisioning():
-    global ble_instance, write_handle, read_handle, pending_config
+    global ble_instance, write_handle, read_handle, pending_config, _shutdown_requested
     if not has_ble:
         print(" Bluetooth (BLE) is not supported on this hardware platform.")
         return
     print(" Initializing Common BLE Provisioning Service...")
+    _shutdown_requested = False
     try:
         import gc
         import network
@@ -229,6 +232,7 @@ def start_provisioning():
             raw_bytes = pending_config
             pending_config = None
             try:
+                _shutdown_requested = True
                 payload_str = raw_bytes.decode('utf-8').strip()
                 print("BLE Received JSON configuration:", payload_str)
                 provision_data = ujson.loads(payload_str)
