@@ -86,26 +86,39 @@ def main():
     led_status.set_status("WIFI_CONNECTING")
     gc.collect()
     
-    # Launch services with staggered delays to allow clean FreeRTOS task allocation
     if espnow_only:
         print("ESP-NOW-only test mode: WAN, MQTT, and scheduler disabled")
         heartbeats.pop("network", None)
         heartbeats.pop("mqtt", None)
         heartbeats.pop("scheduler", None)
         mqtt_client.set_enabled(False)
+        receiver_fn = espnow_master.espnow_test_receiver_thread
+        _thread.start_new_thread(receiver_fn, (heartbeats,))
     else:
         mqtt_client.register_cmd_dispatcher(espnow_master.dispatch_command_from_mqtt)
+        
+        # 6.1 Start WAN / Wi-Fi thread first so WPA2 AES handshake completes without memory contention
         _thread.start_new_thread(network_manager.wan_thread, (heartbeats,))
-        time.sleep_ms(150)
+        
+        # Wait up to 6 seconds for initial Wi-Fi connection to lock channel and finish AES handshake
+        start_conn_wait = time.time()
+        while time.time() - start_conn_wait < 6:
+            if network_manager.is_connected():
+                break
+            time.sleep_ms(200)
+            
+        gc.collect()
+        time.sleep_ms(200)
+        
+        # 6.2 Start MQTT thread
         _thread.start_new_thread(mqtt_client.mqtt_thread, (heartbeats,))
-        time.sleep_ms(150)
+        time.sleep_ms(200)
 
-    receiver_fn = (espnow_master.espnow_test_receiver_thread
-                   if espnow_only else espnow_master.espnow_receiver_thread)
-    _thread.start_new_thread(receiver_fn, (heartbeats,))
-    time.sleep_ms(150)
+        # 6.3 Start ESP-NOW Master receiver
+        _thread.start_new_thread(espnow_master.espnow_receiver_thread, (heartbeats,))
+        time.sleep_ms(200)
 
-    if not espnow_only:
+        # 6.4 Start Scheduler
         _thread.start_new_thread(scheduler.scheduler_thread, (heartbeats, espnow_master.send_espnow_msg))
     
     gc.collect()
