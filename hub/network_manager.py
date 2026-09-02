@@ -13,8 +13,9 @@ def is_connected():
     except Exception:
         return _is_wan_connected
 
-def connect_wifi(networks, timeout=15):
-    wlan = network.WLAN(network.STA_IF)
+def connect_wifi(networks, wlan=None, timeout=15):
+    if wlan is None:
+        wlan = network.WLAN(network.STA_IF)
     if not wlan.active():
         wlan.active(True)
     
@@ -69,7 +70,7 @@ def wan_thread(heartbeats=None):
             led_status.set_status("WIFI_CONNECTING")
             print("WAN Disconnected! Reconnecting...")
             
-            connected = connect_wifi(networks)
+            connected = connect_wifi(networks, wlan)
             if connected:
                 _is_wan_connected = True
                 led_status.set_status("WIFI_CONNECTED")

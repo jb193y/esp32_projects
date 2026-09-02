@@ -238,6 +238,12 @@ def start_provisioning():
                 update_device_config(provision_data)
                 time.sleep(1)
                 try:
+                    if ble_instance is not None:
+                        ble_instance.active(False)
+                        ble_instance = None
+                except Exception as ble_shutdown_err:
+                    print(" BLE shutdown notice:", ble_shutdown_err)
+                try:
                     import sys
                     sys.stdout.write("\r\n--- BLE PROVISIONING COMPLETE: REBOOTING ESP32 ---\r\n")
                     sys.stdout.flush()
