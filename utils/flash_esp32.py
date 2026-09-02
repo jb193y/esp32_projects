@@ -1,16 +1,65 @@
 import os
 import glob
-import subprocess
 import json
 import hashlib
 import sys
+import time
+import serial
 
 r"""
-	python -m esptool --port COM24 --chip esp32s3 erase_flash
-	python -m esptool --port COM24 --chip esp32s3 write_flash -z 0 "..\firmware\ESP32_GENERIC_S3-20251209-v1.27.0.bin"
-	python utils/flash_esp32.py led_lights COM24
-    mpremote connect COM24 repl
+Usage:
+    python utils/flash_esp32.py valve_controller COM21
+    python utils/flash_esp32.py hub COM24
 """
+
+def send_command(ser, cmd, timeout=5):
+    """Execute raw Python code in Raw REPL and return response."""
+    ser.timeout = timeout
+    ser.write(cmd.encode('utf-8') + b'\x04')
+    response = ser.read_until(b'\x04>')
+    if b'Traceback' in response:
+        print("Command notice:", response.decode('utf-8', errors='ignore'))
+    return response
+
+def enter_raw_repl(ser):
+    """Enter raw REPL with hardware reset and aggressive interrupt stream."""
+    print("Resetting ESP32 and capturing REPL prompt...")
+    
+    # 1. Hardware reset via RTS/DTR toggle
+    ser.rts = False
+    ser.dtr = False
+    ser.setRTS(False)
+    ser.setDTR(False)
+    time.sleep(0.05)
+    ser.setRTS(True)
+    time.sleep(0.2)
+    ser.setRTS(False)
+    time.sleep(0.2)
+    ser.reset_input_buffer()
+    
+    # 2. Send Ctrl-C interrupts during boot.py safe-boot window
+    for _ in range(8):
+        ser.write(b'\x03\x03')
+        time.sleep(0.1)
+    
+    ser.reset_input_buffer()
+    time.sleep(0.2)
+    
+    # 3. Send Ctrl-A to enter raw REPL
+    ser.write(b'\x01')
+    time.sleep(0.4)
+    
+    resp = ser.read_until(b'raw REPL; CTRL-B to exit\r\n>')
+    if b'raw REPL' not in resp:
+        # Retry Ctrl-A once more
+        ser.write(b'\x03\x01')
+        time.sleep(0.5)
+        resp += ser.read_until(b'raw REPL; CTRL-B to exit\r\n>')
+        
+    if b'raw REPL' not in resp:
+        raise RuntimeError(f"Could not enter raw REPL. Device response: {resp}")
+        
+    print("Connected to Raw REPL successfully.")
 
 def get_local_file_hash(path):
     """Calculate the SHA256 hash of a local file."""
@@ -27,7 +76,7 @@ def get_local_file_hash(path):
         print(f"Error reading local file {path}: {e}")
         return None
 
-def get_device_files_metadata(mpremote, port):
+def get_device_files_metadata(ser):
     """Query the ESP32 for sizes and SHA256 hashes of all files recursively."""
     device_script = (
         "import os, hashlib, json\n"
@@ -58,174 +107,154 @@ def get_device_files_metadata(mpremote, port):
         "print(json.dumps(res))\n"
         "print('__JSON_END__')\n"
     )
-    try:
-        proc = subprocess.run(
-            [*mpremote, 'connect', port, 'exec', device_script],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        output = proc.stdout
-    except subprocess.CalledProcessError as e:
-        print(f"Error: Failed to query device filesystem metadata on {port}: {e.stderr or str(e)}")
-        return None
-
+    
+    resp_bytes = send_command(ser, device_script, timeout=6)
+    output = resp_bytes.decode('utf-8', errors='ignore')
+    
     if '__JSON_START__' not in output or '__JSON_END__' not in output:
-        print("Error: Could not parse device metadata response.")
+        print("Error: Could not parse device metadata response. Raw output:", output)
         return None
         
     json_str = output.split('__JSON_START__')[1].split('__JSON_END__')[0].strip()
     try:
         return json.loads(json_str)
     except Exception as e:
-        print(f"Error: Error decoding device files JSON: {e}")
+        print(f"Error decoding device files JSON: {e}")
         return None
 
-def prepare_esp32_connection(port):
-    """Reset the ESP32 out of deep sleep and interrupt boot.py to halt at REPL prompt."""
-    try:
-        import serial
-        import time
-        ser = serial.Serial(port, 115200, timeout=1)
-        # 1. Hardware reset pulse via RTS/DTR
-        ser.rts = False
-        ser.dtr = False
-        time.sleep(0.05)
-        ser.rts = True
-        time.sleep(0.2)
-        ser.rts = False
-        time.sleep(0.3)
+def upload_file_stream(ser, local_path, remote_path):
+    """Stream file content via base64 chunks over open raw REPL."""
+    import binascii
+    with open(local_path, 'rb') as f:
+        data = f.read()
         
-        # 2. Stream Ctrl-C interrupts to break boot.py safe boot delay and stop execution
-        for _ in range(10):
-            ser.write(b'\x03')
-            time.sleep(0.1)
-            
-        ser.reset_input_buffer()
-        ser.close()
-        time.sleep(0.4)
-    except Exception:
-        pass
+    b64_data = binascii.b2a_base64(data).decode('ascii').replace('\n', '')
+    
+    # Ensure directory exists if needed
+    if '/' in remote_path:
+        dir_name = '/'.join(remote_path.split('/')[:-1])
+        send_command(ser, f"import os\ntry: os.mkdir('{dir_name}')\nexcept: pass\n")
+        
+    send_command(ser, f"import ubinascii\nf = open('{remote_path}', 'wb')\n")
+    
+    chunk_size = 256
+    for i in range(0, len(b64_data), chunk_size):
+        b64_chunk = b64_data[i:i+chunk_size]
+        send_command(ser, f"f.write(ubinascii.a2b_base64('{b64_chunk}'))\n")
+        
+    send_command(ser, "f.close()\n")
 
 def main():
     import argparse
 
-    # Resolve project root (parent of utils) and python/mpremote path
     utils_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(utils_dir)
-    mpremote = ['python', '-m', 'mpremote']
     
-    # --- Argument Parsing ---
-    parser = argparse.ArgumentParser(description="Delta-sync a project component to an ESP32 device.")
+    parser = argparse.ArgumentParser(description="Reliable persistent delta-sync for ESP32 devices.")
     parser.add_argument("type", help="The project component to deploy (e.g., 'hub', 'valve_controller').")
-    parser.add_argument("port", help="The COM port of the ESP32 device (e.g., 'COM3').")
+    parser.add_argument("port", help="The COM port of the ESP32 device (e.g., 'COM21').")
     args = parser.parse_args()
 
     target_dir = os.path.join(project_root, args.type)
-    
-    # --- 1. Wake / Interrupt ESP32 into REPL ---
-    print(f"Connecting to ESP32 on {args.port} (waking & interrupting)...")
-    prepare_esp32_connection(args.port)
+    if not os.path.exists(target_dir):
+        print(f"Error: Target directory {target_dir} does not exist.")
+        sys.exit(1)
 
-    # --- 2. Query Device Files for Sync & Cleanup ---
-    print(f"Scanning ESP32 device filesystem on {args.port}...")
-    device_files = get_device_files_metadata(mpremote, args.port)
-    if device_files is None:
-        # Retry connection once more if the port was slow to stabilize
-        print(f"Retrying connection to {args.port}...")
-        prepare_esp32_connection(args.port)
-        device_files = get_device_files_metadata(mpremote, args.port)
+    print(f"Connecting to {args.port} at 115200...")
+    ser = serial.Serial(args.port, 115200, timeout=2)
+    
+    try:
+        # --- 1. Enter Raw REPL ---
+        enter_raw_repl(ser)
+        
+        # --- 2. Query Device Files for Delta Sync ---
+        print(f"Scanning filesystem on {args.port}...")
+        device_files = get_device_files_metadata(ser)
         if device_files is None:
-            print("[ERROR] Device connection failed. Aborting sync.")
+            print("[ERROR] Failed to query device metadata.")
             sys.exit(1)
-    
-    # Compile the set of local files we expect to find on the device
-    expected_files = {}
-    
-    # Project configs
-    for f in glob.glob(os.path.join(target_dir, 'config*.json')):
-        rel = os.path.basename(f)
-        expected_files[rel] = f
-        
-    # Project python files (excluding utility/helper scripts in utils/)
-    for f in glob.glob(os.path.join(target_dir, '*.py')):
-        basename = os.path.basename(f)
-        if basename not in ('flash_esp32.py', 'verify_device.py', 'pack_code.py', 'unpack_code.py'):
-            expected_files[basename] = f
-        
-    # Global shared lib python files
-    for f in glob.glob(os.path.join(project_root, 'lib', '*.py')):
-        rel = f"lib/{os.path.basename(f)}"
-        expected_files[rel] = f
-        
-    # --- 2. Delete Unwanted Files (Cleanup) ---
-    preserve_list = {
-        'events.jsonl',
-        'faults.jsonl',
-        'config.json'
-    }
-    
-    unwanted_files = []
-    for dev_file in device_files.keys():
-        # Do not clean up .bak files to preserve local rollback snapshots
-        if dev_file.endswith('.bak'):
-            continue
-        if dev_file not in expected_files and dev_file not in preserve_list:
-            unwanted_files.append(dev_file)
             
-    if unwanted_files:
-        print(f"Cleanup: Found {len(unwanted_files)} unwanted files on the ESP32. Deleting...")
-        for f in unwanted_files:
-            print(f" - Deleting {f}...")
-            subprocess.run([*mpremote, 'connect', args.port, 'fs', 'rm', f':{f}'], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-    else:
-        print("Device filesystem clean (no unwanted files).")
- 
-    # --- 3. Create remote lib folder if needed ---
-    if any(rel.startswith('lib/') for rel in expected_files.keys()):
-        # Quick check if lib directory needs creation
-        lib_exists = any(dev_f.startswith('lib/') for dev_f in device_files.keys())
-        if not lib_exists:
-            print(f"\nCreating remote :lib directory on {args.port}...")
-            subprocess.run([*mpremote, 'connect', args.port, 'fs', 'mkdir', ':lib'], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-    
-    # --- 4. Delta Sync Files ---
-    print("\nChecking file sync status...")
-    up_to_date_files = []
-    out_of_sync_files = []
-    
-    for rel_path, local_abs_path in sorted(expected_files.items()):
-        # Calculate local file metadata
-        local_size = os.path.getsize(local_abs_path)
-        local_hash = get_local_file_hash(local_abs_path)
+        # Compile local expected files
+        expected_files = {}
         
-        # Check if file exists on device and matches metadata
-        is_synced = False
-        if rel_path in device_files:
-            dev_meta = device_files[rel_path]
-            if dev_meta.get('size') == local_size and dev_meta.get('sha256') == local_hash:
-                is_synced = True
+        # Project configs
+        for f in glob.glob(os.path.join(target_dir, 'config*.json')):
+            rel = os.path.basename(f)
+            expected_files[rel] = f
+            
+        # Project python files
+        for f in glob.glob(os.path.join(target_dir, '*.py')):
+            basename = os.path.basename(f)
+            if basename not in ('flash_esp32.py', 'verify_device.py', 'pack_code.py', 'unpack_code.py'):
+                expected_files[basename] = f
                 
-        if is_synced:
-            up_to_date_files.append(rel_path)
-        else:
-            out_of_sync_files.append((rel_path, local_abs_path))
- 
-    # Print up-to-date files first
-    if up_to_date_files:
-        print("\nUp-to-date files (skipped):")
-        for rel_path in up_to_date_files:
-            print(f" - {rel_path}")
+        # Shared lib python files
+        for f in glob.glob(os.path.join(project_root, 'lib', '*.py')):
+            rel = f"lib/{os.path.basename(f)}"
+            expected_files[rel] = f
             
-    # Print and copy out-of-sync files
-    if out_of_sync_files:
-        print(f"\nSynchronizing out-of-sync files to ESP32 on {args.port}...")
-        for rel_path, local_abs_path in out_of_sync_files:
-            print(f" - {rel_path}")
-            target_path = f":{rel_path}"
-            subprocess.run([*mpremote, 'connect', args.port, 'fs', 'cp', local_abs_path, target_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
- 
-    print(f"\nESP32 sync complete! Synced: {len(out_of_sync_files)} files, Skipped: {len(up_to_date_files)} files.")
+        # --- 3. Clean up unwanted files ---
+        preserve_list = {'events.jsonl', 'faults.jsonl', 'config.json'}
+        unwanted_files = []
+        for dev_file in device_files.keys():
+            if dev_file.endswith('.bak'):
+                continue
+            if dev_file not in expected_files and dev_file not in preserve_list:
+                unwanted_files.append(dev_file)
+                
+        if unwanted_files:
+            print(f"Cleanup: Deleting {len(unwanted_files)} obsolete files from device...")
+            for f in unwanted_files:
+                print(f" - Removing {f}...")
+                send_command(ser, f"import os\ntry: os.remove('{f}')\nexcept: pass\n")
+        else:
+            print("Filesystem clean (no obsolete files).")
+            
+        # --- 4. Ensure :lib directory exists ---
+        send_command(ser, "import os\ntry: os.mkdir('lib')\nexcept: pass\n")
+        
+        # --- 5. Delta Sync Files ---
+        print("\nChecking delta file sync status...")
+        up_to_date_files = []
+        out_of_sync_files = []
+        
+        for rel_path, local_abs_path in sorted(expected_files.items()):
+            local_size = os.path.getsize(local_abs_path)
+            local_hash = get_local_file_hash(local_abs_path)
+            
+            is_synced = False
+            if rel_path in device_files:
+                dev_meta = device_files[rel_path]
+                if dev_meta.get('size') == local_size and dev_meta.get('sha256') == local_hash:
+                    is_synced = True
+                    
+            if is_synced:
+                up_to_date_files.append(rel_path)
+            else:
+                out_of_sync_files.append((rel_path, local_abs_path))
+                
+        if up_to_date_files:
+            print("\nUp-to-date files (skipped):")
+            for rel_path in up_to_date_files:
+                print(f" [=] {rel_path}")
+                
+        if out_of_sync_files:
+            print(f"\nFlashing {len(out_of_sync_files)} updated/missing files...")
+            for rel_path, local_abs_path in out_of_sync_files:
+                print(f" [^] Uploading {rel_path}...")
+                upload_file_stream(ser, local_abs_path, rel_path)
+            print("All updated files uploaded successfully.")
+        else:
+            print("\nAll files are already up-to-date! No transfer needed.")
+            
+        # --- 6. Reset Device ---
+        print("\nSync completed. Resetting device...")
+        ser.write(b'\x02\x04') # Ctrl-B (exit raw REPL) + Ctrl-D (soft reboot)
+        time.sleep(0.5)
+        print("Done!")
+        
+    finally:
+        ser.close()
 
 if __name__ == '__main__':
     main()
