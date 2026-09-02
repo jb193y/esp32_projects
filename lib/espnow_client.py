@@ -57,7 +57,10 @@ def client_tx_loop():
                 add_peer_safe(_e, next_hop_bytes)
                 res = config.send_fragmented(_e, next_hop_bytes, payload_bytes)
                 print(f" [TX Queue] Envelope sent to next hop {phys_mac} for destination {target_id} (res={res})")
-                print(repr(payload_bytes))
+                try:
+                    print(payload_bytes[2:].decode('utf-8'))
+                except Exception:
+                    pass
                 print()
             except Exception as send_err:
                 print(" [TX Queue] ESP-NOW send error:", send_err)

@@ -5,7 +5,7 @@ import json
 import hashlib
 import sys
 
-"""
+r"""
 	python -m esptool --port COM24 --chip esp32s3 erase_flash
 	python -m esptool --port COM24 --chip esp32s3 write_flash -z 0 "..\firmware\ESP32_GENERIC_S3-20251209-v1.27.0.bin"
 	python utils/flash_esp32.py led_lights COM24
@@ -81,6 +81,23 @@ def get_device_files_metadata(mpremote, port):
         print(f"Error: Error decoding device files JSON: {e}")
         return None
 
+def reset_esp32_via_serial(port):
+    """Pulse DTR/RTS lines to physically reset the ESP32 out of deep sleep into boot.py."""
+    try:
+        import serial
+        import time
+        ser = serial.Serial(port, 115200, timeout=1)
+        ser.rts = False
+        ser.dtr = False
+        time.sleep(0.05)
+        ser.rts = True   # Trigger reset
+        time.sleep(0.2)
+        ser.rts = False  # Release reset
+        time.sleep(0.5)
+        ser.close()
+    except Exception:
+        pass
+
 def main():
     import argparse
 
@@ -97,7 +114,11 @@ def main():
 
     target_dir = os.path.join(project_root, args.type)
     
-    # --- 1. Query Device Files for Sync & Cleanup ---
+    # --- 1. Wake / Reset ESP32 if sleeping ---
+    print(f"Connecting to ESP32 on {args.port} (waking if sleeping)...")
+    reset_esp32_via_serial(args.port)
+
+    # --- 2. Query Device Files for Sync & Cleanup ---
     print(f"Scanning ESP32 device filesystem on {args.port}...")
     device_files = get_device_files_metadata(mpremote, args.port)
     if device_files is None:
