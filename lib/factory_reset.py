@@ -1,9 +1,9 @@
 # lib/factory_reset.py
 import machine
 import time
-import _thread
 import os
 import ujson
+import micropython
 import led_status
 import config
 
@@ -11,62 +11,71 @@ HOLD_TIME_MS = 3000  # 3-second button hold for factory reset
 _timer = None
 _held_time = {}
 _button_pins = []
+_reset_scheduled = False
+
+def _do_factory_reset(pin_num):
+    """Executes outside ISR context where heap allocation and file I/O are fully permitted."""
+    global _reset_scheduled
+    try:
+        print(f"\r\n--- FACTORY RESET TRIGGERED (GPIO {pin_num}) ---")
+        try:
+            led_status.set_status("BLE_PROVISIONING")
+        except Exception:
+            pass
+
+        try:
+            cfg = config.load_config()
+            cfg.setdefault("client", {})["mode"] = "ble_setup"
+            with open("config.json", "w") as f:
+                ujson.dump(cfg, f)
+            print(" Updated config.json to mode: ble_setup")
+        except Exception as ex:
+            print(" Config reset error:", ex)
+            try:
+                os.remove("config.json")
+                print(" Removed config.json")
+            except Exception:
+                pass
+
+        try:
+            import sys
+            sys.stdout.write("\r\n--- FACTORY RESET COMPLETE: REBOOTING ESP32 ---\r\n")
+            sys.stdout.flush()
+        except Exception:
+            pass
+
+        time.sleep_ms(400)
+        machine.reset()
+    except Exception as err:
+        print("Factory reset fatal error:", err)
+        _reset_scheduled = False
 
 def _check_buttons(t):
-    global _held_time, _button_pins
-    try:
-        for pin_num, btn in _button_pins:
-            try:
-                val = btn.value()
-            except Exception:
-                continue
+    global _held_time, _button_pins, _reset_scheduled
+    if _reset_scheduled:
+        return
 
-            if val == 0:  # Active LOW (button pressed)
-                _held_time[pin_num] += 100
-                if _held_time[pin_num] == 800:
-                    print(f" Factory Reset button (GPIO {pin_num}) hold detected... keep holding!")
-                    try:
-                        led_status.set_status("START_DISCOVERY")
-                    except Exception:
-                        pass
+    for pin_num, btn in _button_pins:
+        try:
+            if btn.value() == 0:  # Active LOW (button pressed)
+                _held_time[pin_num] = _held_time.get(pin_num, 0) + 100
 
                 if _held_time[pin_num] >= HOLD_TIME_MS:
-                    print(f" Factory Reset triggered on GPIO {pin_num}! Resetting to BLE Setup mode...")
+                    _reset_scheduled = True
                     try:
-                        led_status.set_status("BLE_PROVISIONING")
+                        micropython.schedule(_do_factory_reset, pin_num)
                     except Exception:
                         pass
-
-                    try:
-                        cfg = config.load_config()
-                        cfg.setdefault("client", {})["mode"] = "ble_setup"
-                        with open("config.json", "w") as f:
-                            ujson.dump(cfg, f)
-                        print(" Updated config.json to mode: ble_setup")
-                    except Exception as ex:
-                        print(" Config reset notice:", ex)
-                        try:
-                            os.remove("config.json")
-                        except Exception:
-                            pass
-
-                    try:
-                        import sys
-                        sys.stdout.write("\r\n--- FACTORY RESET REBOOTING ESP32 ---\r\n")
-                        sys.stdout.flush()
-                    except Exception:
-                        pass
-                    time.sleep_ms(300)
-                    machine.reset()
             else:
                 _held_time[pin_num] = 0
-    except Exception:
-        pass
+        except Exception:
+            pass
 
 def start():
-    global _timer, _held_time, _button_pins
+    global _timer, _held_time, _button_pins, _reset_scheduled
+    _reset_scheduled = False
     print(" Factory Reset monitor initializing (Timer mode)...")
-    candidate_pins = [0, 47]
+    candidate_pins = [0, 47, 14]
     _button_pins = []
     for pin_num in candidate_pins:
         try:
