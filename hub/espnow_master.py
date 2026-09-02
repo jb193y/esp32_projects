@@ -11,6 +11,7 @@ import config
 import mqtt_client
 import scheduler
 import message_builder
+import espnow_ota
 
 _e = None
 NODES_FILE = "nodes.json"
@@ -201,6 +202,9 @@ def send_espnow_msg(target_mac_str, msg_dict, routing_path=None, target_id=None)
         print(" Failed to enqueue ESP-NOW packet:", e)
         return False
 
+# Initialize OTASender instance for ESP-NOW firmware broadcasting
+ota_sender = espnow_ota.OTASender(send_espnow_msg)
+
 _discovery_active_until = 0
 
 def start_mesh_discovery(duration_sec=60):
@@ -357,6 +361,40 @@ def dispatch_command_from_mqtt(target_node, command, routing_path, args):
         deficit = args.get("deficit", 10.0)
         duration = args.get("duration", 300)
         scheduler.queue_irrigation(target_mac_str, deficit, duration)
+    elif command == "OTA":
+        def _bg_ota_task(mac, node_id, args_dict, n_type, s_site, s_group):
+            try:
+                base_url = args_dict.get("url") or cfg.get("ota", {}).get("base_url", "http://10.10.10.211:8000/fw")
+                manifest_name = args_dict.get("manifest_name") or cfg.get("ota", {}).get("manifest", "manifest.json")
+                
+                print(f" [Hub OTA Task] Starting ESP-NOW OTA for node {node_id} from {base_url}")
+                if s_site != "default_site":
+                    mqtt_client.publish_msg(f"{s_site}/{s_group}/{n_type}/{node_id}/acks", {
+                        "source": client_id, "target": "backend_api", "msg_type": "ACK",
+                        "timestamp": config.get_unix_time(),
+                        "data": {"status": "OTA_STAGING_ON_HUB", "target_node": node_id, "url": base_url}
+                    })
+                
+                version, cached_files = ota_sender.fetch_manifest_and_stage(base_url, manifest_name)
+                ota_sender.stream_firmware_to_node(mac, node_id, version, cached_files)
+                
+                if s_site != "default_site":
+                    mqtt_client.publish_msg(f"{s_site}/{s_group}/{n_type}/{node_id}/acks", {
+                        "source": client_id, "target": "backend_api", "msg_type": "ACK",
+                        "timestamp": config.get_unix_time(),
+                        "data": {"status": "OTA_COMPLETED", "target_node": node_id, "version": version}
+                    })
+            except Exception as ota_err:
+                print(f" [Hub OTA Task] Error updating node {node_id}:", ota_err)
+                if s_site != "default_site":
+                    mqtt_client.publish_msg(f"{s_site}/{s_group}/{n_type}/{node_id}/acks", {
+                        "source": client_id, "target": "backend_api", "msg_type": "ACK",
+                        "timestamp": config.get_unix_time(),
+                        "data": {"status": "OTA_FAILED", "target_node": node_id, "error": str(ota_err)}
+                    })
+                
+        import _thread
+        _thread.start_new_thread(_bg_ota_task, (target_mac_str, target_node, args, node_type, site, group))
     else:
         payload = {"cmd": command}
         payload.update(args)
@@ -646,6 +684,10 @@ def hub_rx_processor_loop():
                     print(" [Hub] Response delivery error:", ack_err)
 
             elif msg_type == "ACK":
+                # Forward to ota_sender if this is an OTA protocol packet
+                if isinstance(data, dict) and ("ota_proto" in data or str(data.get("status", "")).startswith("OTA_") or str(data.get("status", "")).startswith("CHUNK_") or str(data.get("status", "")).startswith("VERIFY_")):
+                    ota_sender.notify_ack(data)
+
                 site = cfg.get("client", {}).get("site", "default_site")
                 group = cfg.get("client", {}).get("group", "all")
                 if site == "default_site":

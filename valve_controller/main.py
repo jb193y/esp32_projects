@@ -11,10 +11,15 @@ import ble_manager
 import espnow_client
 import factory_reset
 
+import espnow_ota
+
 # State
 valves = {}
 last_telemetry_time = 0
 next_telemetry_delay = 30
+
+# Initialize OTA Receiver for ESP-NOW firmware updates
+ota_receiver = espnow_ota.OTAReceiver(espnow_client.send_ack_or_tele_to_hub)
 
 # Non-blocking command queue — receive thread enqueues, main loop executes
 _cmd_queue = []
@@ -126,18 +131,31 @@ def pulse_solenoid(valve_id="1", open_pulse=True):
     save_valve_states()
     print(f" Solenoid Valve {valve_id} Action complete. State: {valve['state']}")
 
-def handle_hub_commands(packet, sender_mac):
+def handle_hub_commands(cmd_or_packet, args_or_sender=None):
     """
     Called from espnow_client listener thread when a message arrives from the Hub.
+    Handles both packet dictionaries and (cmd, args) callbacks.
     """
-    msg_type = packet.get("msg_type")
-    data = packet.get("data", {})
-    
-    print(f" Received from Hub ({msg_type}): {data}")
-    
-    if msg_type in ("CMD", "COMMAND"):
+    if isinstance(cmd_or_packet, dict):
+        msg_type = cmd_or_packet.get("msg_type")
+        data = cmd_or_packet.get("data", {})
         cmd = data.get("cmd") or data.get("command")
-        # Enqueue for non-blocking execution in the main loop
+        sender_mac = args_or_sender or cmd_or_packet.get("source")
+    else:
+        cmd = cmd_or_packet
+        data = args_or_sender if isinstance(args_or_sender, dict) else {}
+        sender_mac = data.get("sender_mac")
+        msg_type = "COMMAND" if cmd else "ACK"
+
+    print(f" Received from Hub ({msg_type}): cmd={cmd}, data={data}")
+
+    # Process ESP-NOW OTA packets directly for minimum latency
+    if isinstance(data, dict) and (cmd == "OTA" or str(data.get("action", "")).startswith("OTA_")):
+        led_status.set_status("BLE_PROVISIONING")
+        ota_receiver.handle_packet(data, sender_mac)
+        return
+
+    if msg_type in ("CMD", "COMMAND"):
         _cmd_queue.append((cmd, data, sender_mac))
     elif msg_type == "ACK":
         status_val = data.get("status")
@@ -238,56 +256,33 @@ def execute_command(cmd, args, sender_mac=None):
         machine.reset()
 
     elif cmd == "OTA":
-        print(" OTA command received! Initiating firmware update...")
-        try:
+        print(" OTA command received:", args)
+        if isinstance(args, dict) and "action" in args:
+            led_status.set_status("BLE_PROVISIONING")
+            ota_receiver.handle_packet(args, sender_mac)
+        else:
+            # Fallback direct Wi-Fi OTA if full URL provided and Wi-Fi credentials exist
             try:
-                espnow_client._e.active(False)
-            except:
-                pass
-                
-            import network_manager
-            cfg = config.load_config()
-            wifi_networks = cfg.get("wifi", {}).get("networks", [])
-            if not wifi_networks:
-                raise Exception("No Wi-Fi credentials in config.json")
-                
-            print(" Connecting to Wi-Fi...")
-            if not network_manager.connect():
-                raise Exception("Failed to connect to Wi-Fi")
-                
-            import ota
-            client_info = cfg.get("client", {})
-            ota_cfg = cfg.get("ota", {})
-            
-            args_dict = {}
-            if isinstance(args, dict):
-                args_dict = args
-            elif isinstance(args, str):
-                try:
-                    import ujson
-                    args_dict = ujson.loads(args)
-                except:
-                    pass
-                    
-            ota_url = args_dict.get("url") or ota_cfg.get("base_url") or "http://10.10.10.211:8000/fw"
-            manifest_name = args_dict.get("manifest_name") or ota_cfg.get("manifest") or "manifest.json"
-            
-            fw_ver = args_dict.get("version") or client_info.get("firmware_version", "valve_v1.0.0")
-            base_url = ota_url.rstrip('/')
-            
-            print(f" Downloading manifest from: {base_url}/{manifest_name}")
-            manifest = ota.fetch_manifest(base_url, manifest_name)
-            
-            print(" Staging files...")
-            if ota.ota_update(base_url, manifest=manifest):
-                print(" OTA Successful! Rebooting...")
-                config.update_config({"client": {"firmware_version": fw_ver}})
-                time.sleep(1)
-                machine.reset()
-        except Exception as ota_err:
-            print(" OTA failed:", ota_err)
-            time.sleep(1)
-            machine.reset()
+                import network_manager
+                cfg = config.load_config()
+                wifi_networks = cfg.get("wifi", {}).get("networks", [])
+                if wifi_networks and network_manager.connect():
+                    import ota
+                    base_url = args.get("url") if isinstance(args, dict) else None
+                    if not base_url:
+                        base_url = cfg.get("ota", {}).get("base_url", "http://10.10.10.211:8000/fw")
+                    manifest = ota.fetch_manifest(base_url)
+                    if ota.ota_update(base_url, manifest=manifest):
+                        time.sleep(1)
+                        machine.reset()
+                else:
+                    espnow_client.send_ack_or_tele_to_hub("ACK", {
+                        "status": "OTA_READY_FOR_ESPNOW",
+                        "valves": {vid: v["state"] for vid, v in valves.items()},
+                        "node_status": "active"
+                    }, target_mac=sender_mac)
+            except Exception as ota_err:
+                print(" Direct Wi-Fi OTA failed:", ota_err)
 
 def main():
     global last_telemetry_time, next_telemetry_delay
@@ -395,12 +390,18 @@ def main():
             if _cmd_queue:
                 cmd, args, sender_mac = _cmd_queue.pop(0)
                 execute_command(cmd, args, sender_mac)
-                # Wait briefly for ACK packet transmission to complete
                 time.sleep_ms(150)
                 break
             time.sleep_ms(20)
 
-        # 3. Enter Deep Sleep
+        # 3. If an OTA update session is in progress, stay awake until complete!
+        while ota_receiver.is_in_progress():
+            if _cmd_queue:
+                cmd, args, sender_mac = _cmd_queue.pop(0)
+                execute_command(cmd, args, sender_mac)
+            time.sleep_ms(50)
+
+        # 4. Enter Deep Sleep
         print(f" Going to Deep Sleep for {deep_sleep_sec}s. Goodnight!")
         time.sleep_ms(50)
         try:
