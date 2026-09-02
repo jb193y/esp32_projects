@@ -22,39 +22,37 @@ def send_command(ser, cmd, timeout=5):
     return response
 
 def enter_raw_repl(ser):
-    """Enter raw REPL with hardware reset and aggressive interrupt stream."""
-    print("Resetting ESP32 and capturing REPL prompt...")
+    """Enter raw REPL with exact proven hardware reset sequence from upload_serial.py."""
+    print("Resetting ESP32 and entering raw REPL...")
     
-    # 1. Hardware reset via RTS/DTR toggle
+    # 1. Force hardware reset using DTR/RTS lines
     ser.rts = False
     ser.dtr = False
     ser.setRTS(False)
     ser.setDTR(False)
-    time.sleep(0.05)
+    time.sleep(0.1)
     ser.setRTS(True)
     time.sleep(0.2)
     ser.setRTS(False)
     time.sleep(0.2)
     ser.reset_input_buffer()
+    time.sleep(0.1)
     
-    # 2. Send Ctrl-C interrupts during boot.py safe-boot window
-    for _ in range(8):
-        ser.write(b'\x03\x03')
-        time.sleep(0.1)
-    
+    # 2. Send Ctrl-C (0x03) interrupts to stop any running script
+    ser.write(b'\x03\x03')
+    time.sleep(0.1)
     ser.reset_input_buffer()
-    time.sleep(0.2)
     
-    # 3. Send Ctrl-A to enter raw REPL
+    # 3. Send Ctrl-A (0x01) to enter raw REPL
     ser.write(b'\x01')
-    time.sleep(0.4)
+    time.sleep(0.5)
     
-    resp = ser.read_until(b'raw REPL; CTRL-B to exit\r\n>')
+    resp = ser.read(ser.in_waiting or 200)
     if b'raw REPL' not in resp:
-        # Retry Ctrl-A once more
-        ser.write(b'\x03\x01')
+        # Retry with extra interrupt
+        ser.write(b'\x03\x03\x01')
         time.sleep(0.5)
-        resp += ser.read_until(b'raw REPL; CTRL-B to exit\r\n>')
+        resp += ser.read(ser.in_waiting or 200)
         
     if b'raw REPL' not in resp:
         raise RuntimeError(f"Could not enter raw REPL. Device response: {resp}")
