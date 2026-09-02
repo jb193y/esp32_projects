@@ -157,32 +157,43 @@ def start_provisioning():
         return
     print(" Initializing Common BLE Provisioning Service...")
     try:
-        ble_instance = bluetooth.BLE()
-        
-        try:
-            ble_instance.gap_advertise(None)
-        except:
-            pass
-        try:
-            ble_instance.active(False)
-            time.sleep_ms(100)
-        except:
-            pass
-            
+        import gc
         import network
-        wlan = network.WLAN(network.STA_IF)
-        if not wlan.active():
-            wlan.active(True)
-            time.sleep_ms(200)
+
+        try:
+            sta = network.WLAN(network.STA_IF)
+            if sta.active():
+                sta.active(False)
+        except Exception:
+            pass
+        try:
+            ap = network.WLAN(network.AP_IF)
+            if ap.active():
+                ap.active(False)
+        except Exception:
+            pass
+
+        # Read factory MAC from eFuse via machine.unique_id without touching Wi-Fi subsystem
+        mac_str = "000000000000"
+        try:
+            mac_str = ubinascii.hexlify(machine.unique_id()).decode()
+        except:
+            pass
+
+        gc.collect()
+        time.sleep_ms(100)
 
         for attempt in range(3):
             try:
+                ble_instance = bluetooth.BLE()
                 ble_instance.active(True)
                 break
             except Exception as e:
+                ble_instance = None
                 if attempt == 2:
                     raise e
                 print(f" BLE activation attempt {attempt + 1} failed: {e}. Retrying...")
+                gc.collect()
                 time.sleep_ms(500)
 
         ble_instance.irq(irq_handler)
@@ -191,11 +202,6 @@ def start_provisioning():
 
         cfg = config.load_config()
         client_cfg = cfg.get("client", {})
-        try:
-            mac_bytes = wlan.config('mac')
-            mac_str = ubinascii.hexlify(mac_bytes).decode()
-        except:
-            mac_str = "000000000000"
 
         dev_info = {
             "device_id": client_cfg.get("id", "esp32_node_01"),

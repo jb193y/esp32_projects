@@ -1,12 +1,14 @@
 {
   "client": {
-    "id": "valve_node_24",
-    "custom_name": "COM24",
+    "id": "valve_node_20",
+    "custom_name": "COM20",
     "type": "valve",
     "controller_type": "YD-ESP32-S3 2022-V1.3",
     "board_type": "YD-ESP32-S3 2022-V1.3",
     "firmware_version": "valve_v1.0.0",
     "mode": "normal",
+    "deep_sleep_enabled": true,
+    "deep_sleep_sec": 30,
     "espnow_broadcast_only": false,
     "espnow_random_test": false,
     "espnow_random_min_sec": 5,

@@ -7,10 +7,6 @@ import gc
 import config
 import led_status
 import ble_manager
-import network_manager
-import mqtt_client
-import espnow_master
-import scheduler
 import factory_reset
 
 ESPNOW_ONLY_TEST = False
@@ -26,20 +22,6 @@ heartbeats = {
 
 def main():
     print("Hub Master Controller Loading...")
-    
-    # 1. Early Wi-Fi initialization to secure contiguous DMA memory from ESP-IDF
-    try:
-        import network
-        sta = network.WLAN(network.STA_IF)
-        if not sta.active():
-            sta.active(True)
-        try:
-            sta.config(pm=network.WLAN.PM_NONE)
-        except Exception:
-            pass
-    except Exception as wlan_early_err:
-        print("Early WLAN init notice:", wlan_early_err)
-
     gc.collect()
 
     # 2. Configure default thread stack size to 4KB (saves ~30KB RAM over 8KB)
@@ -83,6 +65,11 @@ def main():
         
     # 6. Start Normal Operations (STA Mode)
     print("Booting into STA normal operations...")
+    import network_manager
+    import mqtt_client
+    import espnow_master
+    import scheduler
+
     led_status.set_status("WIFI_CONNECTING")
     gc.collect()
     

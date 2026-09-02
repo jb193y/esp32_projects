@@ -19,6 +19,7 @@
     ]
   },
   "wifi": {
+    "channel": 6,
     "networks": []
   },
   "mqtt": {
