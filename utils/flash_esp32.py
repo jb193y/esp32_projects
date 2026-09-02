@@ -158,13 +158,11 @@ def get_device_files_metadata(ser):
         return None
 
 def upload_file_stream(ser, local_path, remote_path):
-    """Stream file content via base64 chunks over open raw REPL."""
+    """Stream file content via valid standalone base64 chunks over open raw REPL."""
     import binascii
     with open(local_path, 'rb') as f:
         data = f.read()
         
-    b64_data = binascii.b2a_base64(data).decode('ascii').replace('\n', '')
-    
     # Ensure directory exists if needed
     if '/' in remote_path:
         dir_name = '/'.join(remote_path.split('/')[:-1])
@@ -172,9 +170,11 @@ def upload_file_stream(ser, local_path, remote_path):
         
     send_command(ser, f"import ubinascii\nf = open('{remote_path}', 'wb')\n")
     
-    chunk_size = 256
-    for i in range(0, len(b64_data), chunk_size):
-        b64_chunk = b64_data[i:i+chunk_size]
+    # 192 raw bytes -> exactly 256 base64 chars without padding artifacts
+    raw_chunk_size = 192
+    for i in range(0, len(data), raw_chunk_size):
+        raw_chunk = data[i:i+raw_chunk_size]
+        b64_chunk = binascii.b2a_base64(raw_chunk).decode('ascii').strip()
         send_command(ser, f"f.write(ubinascii.a2b_base64('{b64_chunk}'))\n")
         
     send_command(ser, "f.close()\n")

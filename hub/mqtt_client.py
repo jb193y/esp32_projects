@@ -500,13 +500,10 @@ def mqtt_thread(heartbeats=None):
                 led_status.set_status("MQTT_CONNECTED")
                 print(" MQTT Connected!")
                 
-                # Subscribe to command topics
+                # Subscribe to hub command and configuration topics
                 _client.subscribe(cmd_topic.encode('utf-8'))
                 _client.subscribe(config_topic.encode('utf-8'))
-                # Subscribe to all pump and valve commands using the new namespaced format
-                _client.subscribe(b"+/+/pump/+/command")
-                _client.subscribe(b"+/+/valve/+/command")
-                print(f" Subscribed to namespaced command topics: {cmd_topic}, {config_topic}, ...")
+                print(f" Subscribed to Hub topics: {cmd_topic}, {config_topic}")
                 
                 # Publish startup status in standard envelope
                 if site != "default_site":
