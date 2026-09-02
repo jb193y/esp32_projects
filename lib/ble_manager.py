@@ -73,7 +73,10 @@ def irq_handler(event, data):
             led_status.set_status("BLE_PROVISIONING")
         except:
             pass
-        start_advertising()
+        try:
+            start_advertising()
+        except Exception:
+            pass
     elif event == _IRQ_GATTS_WRITE:
         conn_handle, value_handle = data
         if value_handle == write_handle:

@@ -60,6 +60,11 @@ def wan_thread(heartbeats=None):
             wlan.active(True)
         except Exception as act_ex:
             print("WLAN activation notice:", act_ex)
+            if "Memory" in str(act_ex) or "0x3001" in str(act_ex):
+                print(" Soft reboot Wi-Fi DMA state corrupted. Performing clean hardware reset...")
+                time.sleep_ms(300)
+                import machine
+                machine.reset()
     
     while True:
         if heartbeats is not None:
