@@ -352,8 +352,29 @@ def on_message(topic, msg):
                 _provision_confirmed = True
                 print(" Provisioning confirmed via MQTT! System fully operational.")
                 config.update_config({"client": {"mode": "normal"}})
+                cfg.setdefault("client", {})["mode"] = "normal"
                 led_status.set_status("MQTT_CONNECTED")
-                publish_hub_telemetry("PROVISION_CONFIRMED")
+                
+                # Publish official online status and initial telemetry
+                publish_msg(status_topic, {
+                    "source": client_id,
+                    "target": "backend_api",
+                    "msg_type": "STATUS",
+                    "timestamp": config.get_unix_time(),
+                    "route": {
+                        "transport": "MQTT",
+                        "route_id": "direct",
+                        "current_hop_index": 0,
+                        "hops": [client_id],
+                        "link_diagnostics": []
+                    },
+                    "data": {
+                        "device_id": client_id,
+                        "status": "online",
+                        "fw_ver": cfg.get("client", {}).get("firmware_version", "hub_v1.0.0")
+                    }
+                }, retain=True)
+                publish_hub_telemetry("Enabled")
             elif command in ("HUB_ENABLE", "HUB_DISABLE"):
                 status_val = "Enabled" if command == "HUB_ENABLE" else "Disabled"
                 config.update_config({"client": {"status": status_val}})
@@ -505,6 +526,10 @@ def mqtt_thread(heartbeats=None):
                 _client.subscribe(config_topic.encode('utf-8'))
                 print(f" Subscribed to Hub topics: {cmd_topic}, {config_topic}")
                 
+                client_mode = cfg.get("client", {}).get("mode", "normal")
+                is_pending_claim = (client_mode != "normal" and not _provision_confirmed)
+                initial_status = "BLE_CLAIM_PENDING" if is_pending_claim else "online"
+                
                 # Publish startup status in standard envelope
                 if site != "default_site":
                     publish_msg(status_topic, {
@@ -521,17 +546,17 @@ def mqtt_thread(heartbeats=None):
                         },
                         "data": {
                             "device_id": client_id,
-                            "status": "online",
+                            "status": initial_status,
                             "fw_ver": cfg.get("client", {}).get("firmware_version", "hub_v1.0.0")
                         }
                     }, retain=True)
+                    print(f" Published startup status: {initial_status} to {status_topic}")
                 else:
                     print("ERROR: 'site' not set in config. Cannot publish hub status.")
                 
                 # Check if device is pending provision confirmation
                 global _timer_started
-                client_mode = cfg.get("client", {}).get("mode", "normal")
-                if client_mode != "normal" and not _provision_confirmed and not _timer_started:
+                if is_pending_claim and not _timer_started:
                     _timer_started = True
                     print(" Waiting for MQTT command 'CONFIRM_PROVISION' from backend API...")
                     _thread.start_new_thread(_provision_confirmation_timer_bg, ())
@@ -556,9 +581,11 @@ def mqtt_thread(heartbeats=None):
                 print("MQTT connection error check:", e)
                 _is_connected = False
         
-        # Periodically publish hub status telemetry to keep connection alive and provide updates
+        # Periodically publish hub status telemetry ONLY when claim is completed (mode: normal)
         now = time.time()
-        if _is_connected and (now - last_telemetry_time > telemetry_interval):
+        client_mode = cfg.get("client", {}).get("mode", "normal")
+        is_normal_operating = (client_mode == "normal" or _provision_confirmed)
+        if _is_connected and is_normal_operating and (now - last_telemetry_time > telemetry_interval):
             hub_status = cfg.get("client", {}).get("status", "Enabled")
             publish_hub_telemetry(hub_status)
             last_telemetry_time = now
