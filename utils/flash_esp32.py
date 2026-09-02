@@ -135,9 +135,17 @@ def get_device_files_metadata(ser):
         "print('__JSON_END__')\n"
     )
     
+    ser.reset_input_buffer()
+    time.sleep(0.1)
     resp_bytes = send_command(ser, device_script, timeout=6)
     output = resp_bytes.decode('utf-8', errors='ignore')
     
+    if '__JSON_START__' not in output or '__JSON_END__' not in output:
+        time.sleep(0.3)
+        ser.reset_input_buffer()
+        resp_bytes = send_command(ser, device_script, timeout=6)
+        output = resp_bytes.decode('utf-8', errors='ignore')
+
     if '__JSON_START__' not in output or '__JSON_END__' not in output:
         print("Error: Could not parse device metadata response. Raw output:", output)
         return None

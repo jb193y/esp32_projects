@@ -961,10 +961,6 @@ def espnow_receiver_thread(heartbeats=None):
             sta.active(True)
         except Exception as sta_err:
             print("STA active notice:", sta_err)
-    try:
-        sta.config(pm=network.WLAN.PM_NONE)
-    except:
-        pass
 
     try:
         ap = network.WLAN(network.AP_IF)

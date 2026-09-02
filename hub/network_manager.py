@@ -15,11 +15,8 @@ def is_connected():
 
 def connect_wifi(networks, timeout=15):
     wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
-    try:
-        wlan.config(pm=network.WLAN.PM_NONE)
-    except:
-        pass
+    if not wlan.active():
+        wlan.active(True)
     
     if wlan.isconnected():
         return True
@@ -62,10 +59,6 @@ def wan_thread(heartbeats=None):
             wlan.active(True)
         except Exception as act_ex:
             print("WLAN activation notice:", act_ex)
-    try:
-        wlan.config(pm=network.WLAN.PM_NONE)
-    except:
-        pass
     
     while True:
         if heartbeats is not None:
