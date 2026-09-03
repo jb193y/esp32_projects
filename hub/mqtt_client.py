@@ -158,7 +158,9 @@ def on_message(topic, msg):
     global _cmd_dispatcher
     try:
         topic_str = topic.decode('utf-8')
-        payload_str = msg.decode('utf-8')
+        payload_str = msg.decode('utf-8').strip()
+        if not payload_str:
+            return
         print(f"MQTT Received: Topic={topic_str}, Payload={payload_str}")
         
         payload = ujson.loads(payload_str)
