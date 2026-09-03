@@ -84,7 +84,12 @@ def client_tx_loop():
             time.sleep_ms(100)
 
 def mac_to_bytes(mac_str):
-    return bytes(int(x, 16) for x in mac_str.split(':'))
+    if not is_valid_mac(mac_str):
+        return b'\xff\xff\xff\xff\xff\xff'
+    try:
+        return bytes(int(x, 16) for x in mac_str.split(':'))
+    except Exception:
+        return b'\xff\xff\xff\xff\xff\xff'
 
 def bytes_to_mac(mac_bytes):
     return ':'.join('%02x' % b for b in mac_bytes)
@@ -123,7 +128,7 @@ def is_paired():
         try:
             cfg = config.load_config()
             hub_mac = cfg.get("hub", {}).get("mac", "")
-            if hub_mac and hub_mac != "00:00:00:00:00:00":
+            if is_valid_mac(hub_mac) and hub_mac != "00:00:00:00:00:00" and hub_mac != "ff:ff:ff:ff:ff:ff":
                 _paired = True
         except Exception:
             pass
@@ -183,7 +188,16 @@ def parse_packet(payload_str):
     }
 
 def is_valid_mac(mac_str):
-    return isinstance(mac_str, str) and len(mac_str) == 17 and mac_str.count(':') == 5
+    if not isinstance(mac_str, str) or len(mac_str) != 17 or mac_str.count(':') != 5:
+        return False
+    try:
+        for part in mac_str.split(':'):
+            if len(part) != 2:
+                return False
+            int(part, 16)
+        return True
+    except Exception:
+        return False
 
 def get_route_for_target(target_id, target_mac=None):
     cfg = config.load_config()

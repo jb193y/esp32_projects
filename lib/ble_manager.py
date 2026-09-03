@@ -98,15 +98,28 @@ def update_device_config(data):
         cfg.setdefault("mqtt", {})["server"] = data["mqtt_broker"]
         print(f" MQTT Broker updated: {data['mqtt_broker']}")
         
-    # 2. Hub MAC (Pump / Valve)
-    if "hub_mac" in data:
-        cfg.setdefault("hub", {})["mac"] = data["hub_mac"]
-        print(f" Hub MAC updated: {data['hub_mac']}")
-        
+    # 2. Hub MAC / ID (Pump / Valve)
+    hub_val = data.get("hub_mac") or data.get("hub_device_id")
+    if hub_val:
+        # Check if it is a formatted 6-byte MAC address (xx:xx:xx:xx:xx:xx)
+        if isinstance(hub_val, str) and hub_val.count(':') == 5 and len(hub_val) == 17:
+            cfg.setdefault("hub", {})["mac"] = hub_val
+            print(f" Hub MAC updated: {hub_val}")
+        else:
+            cfg.setdefault("hub", {})["id"] = hub_val
+            cfg.setdefault("hub", {})["mac"] = "00:00:00:00:00:00"
+            print(f" Hub ID updated (will discover MAC via ESP-NOW): {hub_val}")
+
     # 3. Parent MAC (Valve)
     if "parent_mac" in data:
-        cfg.setdefault("parent", {})["mac"] = data["parent_mac"]
-        print(f" Parent MAC updated: {data['parent_mac']}")
+        parent_val = data["parent_mac"]
+        if isinstance(parent_val, str) and parent_val.count(':') == 5 and len(parent_val) == 17:
+            cfg.setdefault("parent", {})["mac"] = parent_val
+            print(f" Parent MAC updated: {parent_val}")
+        else:
+            cfg.setdefault("parent", {})["id"] = parent_val
+            cfg.setdefault("parent", {})["mac"] = "00:00:00:00:00:00"
+            print(f" Parent ID updated: {parent_val}")
         
     # 4. Custom Name
     if "custom_name" in data:
