@@ -516,29 +516,52 @@ def mqtt_thread(heartbeats=None):
                 
                 client_mode = cfg.get("client", {}).get("mode", "normal")
                 is_pending_claim = (client_mode != "normal" and not _provision_confirmed)
-                initial_status = "BLE_CLAIM_PENDING" if is_pending_claim else "online"
                 
                 # Publish startup status in standard envelope
                 if site != "default_site":
-                    publish_msg(status_topic, {
-                        "source": client_id,
-                        "target": "backend_api",
-                        "msg_type": "STATUS",
-                        "timestamp": config.get_unix_time(),
-                        "route": {
-                            "transport": "MQTT",
-                            "route_id": "direct",
-                            "current_hop_index": 0,
-                            "hops": [client_id],
-                            "link_diagnostics": []
-                        },
-                        "data": {
-                            "device_id": client_id,
-                            "status": initial_status,
-                            "fw_ver": cfg.get("client", {}).get("firmware_version", "hub_v1.0.0")
-                        }
-                    }, retain=True)
-                    print(f" Published startup status: {initial_status} to {status_topic}")
+                    if is_pending_claim:
+                        # Dedicated provisioning topic (never retained)
+                        publish_msg(prov_hub_topic, {
+                            "source": client_id,
+                            "target": "backend_api",
+                            "msg_type": "PROVISIONING",
+                            "timestamp": config.get_unix_time(),
+                            "route": {
+                                "transport": "MQTT",
+                                "route_id": "direct",
+                                "current_hop_index": 0,
+                                "hops": [client_id],
+                                "link_diagnostics": []
+                            },
+                            "data": {
+                                "device_id": client_id,
+                                "status": "BLE_CLAIM_PENDING",
+                                "node_type": "HUB",
+                                "step": "CLAIM_PENDING",
+                                "fw_ver": cfg.get("client", {}).get("firmware_version", "hub_v1.0.0")
+                            }
+                        }, retain=False)
+                        print(f" Published startup status: BLE_CLAIM_PENDING to {prov_hub_topic}")
+                    else:
+                        publish_msg(status_topic, {
+                            "source": client_id,
+                            "target": "backend_api",
+                            "msg_type": "STATUS",
+                            "timestamp": config.get_unix_time(),
+                            "route": {
+                                "transport": "MQTT",
+                                "route_id": "direct",
+                                "current_hop_index": 0,
+                                "hops": [client_id],
+                                "link_diagnostics": []
+                            },
+                            "data": {
+                                "device_id": client_id,
+                                "status": "online",
+                                "fw_ver": cfg.get("client", {}).get("firmware_version", "hub_v1.0.0")
+                            }
+                        }, retain=True)
+                        print(f" Published startup status: online to {status_topic}")
                 else:
                     print("ERROR: 'site' not set in config. Cannot publish hub status.")
                 
