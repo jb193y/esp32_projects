@@ -94,6 +94,11 @@ def extract_complete_frame(buf):
     """Return (frame_bytes, remainder) if a full frame is available, otherwise (None, buf)."""
     if len(buf) < 2:
         return None, buf
+    
+    # Handle direct un-framed JSON payloads (e.g. b'{"pld"...')
+    if buf[0] == 0x7b:
+        return buf, b""
+
     frame_len = int.from_bytes(buf[:2], 'big')
     total_len = 2 + frame_len
     if len(buf) < total_len:
