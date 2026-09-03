@@ -316,6 +316,12 @@ def on_message(topic, msg):
                 cfg.setdefault("client", {})["mode"] = "normal"
                 led_status.set_status("MQTT_CONNECTED")
                 
+                # Clear retained command on broker
+                try:
+                    _client.publish(cmd_topic.encode('utf-8'), b"", retain=True)
+                except Exception:
+                    pass
+                
                 # Publish official online status and initial telemetry
                 publish_msg(status_topic, {
                     "source": client_id,
