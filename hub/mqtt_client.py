@@ -475,29 +475,31 @@ def mqtt_thread(heartbeats=None):
                     keepalive=mqtt_cfg.get("keepalive", 20)
                 )
                 
-                # Configure Last Will and Testament (LWT) for abrupt disconnects in standard envelope
-                lwt_payload = ujson.dumps({
-                    "source": client_id,
-                    "target": "backend_api",
-                    "msg_type": "STATUS",
-                    "timestamp": config.get_unix_time(),
-                    "route": {
-                        "transport": "MQTT",
-                        "route_id": "lwt",
-                        "current_hop_index": 0,
-                        "hops": [client_id],
-                        "link_diagnostics": []
-                    },
-                    "data": {
-                        "device_id": client_id,
-                        "status": "offline",
-                        "reason": "keepalive_timeout"
-                    }
-                })
-                try:
-                    _client.set_last_will(status_topic.encode('utf-8'), lwt_payload.encode('utf-8'), retain=True)
-                except Exception as lwt_err:
-                    print("Failed to set Last Will:", lwt_err)
+                # Configure Last Will and Testament (LWT) only for commissioned devices in normal mode
+                client_mode = client_info.get("mode", "normal")
+                if client_mode == "normal":
+                    lwt_payload = ujson.dumps({
+                        "source": client_id,
+                        "target": "backend_api",
+                        "msg_type": "STATUS",
+                        "timestamp": config.get_unix_time(),
+                        "route": {
+                            "transport": "MQTT",
+                            "route_id": "lwt",
+                            "current_hop_index": 0,
+                            "hops": [client_id],
+                            "link_diagnostics": []
+                        },
+                        "data": {
+                            "device_id": client_id,
+                            "status": "offline",
+                            "reason": "keepalive_timeout"
+                        }
+                    })
+                    try:
+                        _client.set_last_will(status_topic.encode('utf-8'), lwt_payload.encode('utf-8'), retain=False)
+                    except Exception as lwt_err:
+                        print("Failed to set Last Will:", lwt_err)
 
                 _client.set_callback(on_message)
                 _client.connect()
