@@ -376,7 +376,7 @@ def send_pairing_request():
     }
 
     hub_mac = cfg.get("hub", {}).get("mac", "")
-    has_saved_hub = len(hub_mac) == 17 and hub_mac.count(':') == 5
+    has_saved_hub = is_valid_mac(hub_mac) and hub_mac not in ("00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff")
     time_since_last_rx = time.time() - _last_hub_rx_time
     broadcast_only = client_cfg.get("espnow_broadcast_only", False)
 
