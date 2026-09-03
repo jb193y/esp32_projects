@@ -211,8 +211,8 @@ def main():
     parser.add_argument("--mqtt-host", default="10.10.10.211", help="MQTT broker IP (default: 10.10.10.211)")
     parser.add_argument("--mqtt-port", type=int, default=1883, help="MQTT broker port (default: 1883)")
     parser.add_argument("--mqtt-topic", "-t", action="append", default=None, help="MQTT topic pattern to monitor (can specify multiple)")
-    parser.add_argument("--mqtt-user", default="mss_client", help="MQTT username (default: mss_client)")
-    parser.add_argument("--mqtt-pass", default="Xgs7%67$!@#_", help="MQTT password")
+    parser.add_argument("--mqtt-user", default=None, help="MQTT username (default: None/Anonymous)")
+    parser.add_argument("--mqtt-pass", default=None, help="MQTT password (default: None)")
 
     args = parser.parse_args()
 
@@ -234,7 +234,7 @@ def main():
     if not port2:
         port2 = "COM21"
 
-    topics = args.mqtt_topic or ["+/+/+/+/+", "+/+/+/+", "farm/#"]
+    topics = args.mqtt_topic or ["loc001/#", "farm/#"]
 
     print("=" * 65)
     print(f"  Dual Serial Monitor: {port1} (HUB) <==> {port2} (NODE)")
