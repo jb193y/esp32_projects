@@ -546,6 +546,7 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
             route_id="hub_discovery_notice",
             current_hop_index=0,
             hops=["backend_api"]
+        )
         mqtt_client.publish_msg("farm/config/new_node_added", new_node_payload)
 
     elif msg_type == "STATUS":
