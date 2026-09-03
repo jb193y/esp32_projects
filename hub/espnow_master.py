@@ -538,6 +538,45 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
         if site == "default_site":
             return
 
+    elif msg_type in ("PROVISIONING", "PROV") or (msg_type == "STATUS" and data.get("status") == "BLE_CLAIM_PENDING"):
+        site = cfg.get("client", {}).get("site", "default_site")
+        group = cfg.get("client", {}).get("group", "all")
+        if site == "default_site":
+            return
+
+        nodes = load_nodes()
+        node_info = nodes.get(sender_mac_str, {})
+        node_type = (data.get("node_type") or node_info.get("node_type", "node")).lower()
+        device_id = (data.get("node_id") or node_info.get("node_id", sender_mac_str.replace(':', ''))).lower()
+        step = data.get("step") or ("CLAIM_PENDING" if data.get("status") == "BLE_CLAIM_PENDING" else data.get("status", "CLAIM_PENDING"))
+
+        prov_payload = message_builder.build_mqtt_payload(
+            source=device_id,
+            target="backend_api",
+            msg_type="PROVISIONING",
+            data={
+                "step": step,
+                "status": "BLE_CLAIM_PENDING",
+                "device_id": device_id,
+                "node_type": node_type.upper(),
+                "mac": sender_mac_str,
+                "custom_name": data.get("custom_name") or node_info.get("custom_name", device_id)
+            },
+            route_transport="ESPNOW",
+            route_id=packet.get("route", {}).get("route_id") or packet.get("route", {}).get("rid", "direct"),
+            current_hop_index=packet.get("current_hop_index", 0),
+            hops=packet.get("hops", [])
+        )
+        prov_topic = f"{site}/{group}/{node_type}/{device_id}/provisioning"
+        mqtt_client.publish_msg(prov_topic, prov_payload, retain=False)
+        print(f" [Provisioning] Node {device_id} step '{step}' forwarded to {prov_topic}")
+
+    elif msg_type == "STATUS":
+        site = cfg.get("client", {}).get("site", "default_site")
+        group = cfg.get("client", {}).get("group", "all")
+        if site == "default_site":
+            return
+
         nodes = load_nodes()
         node_info = nodes.get(sender_mac_str, {})
         node_type = (data.get("node_type") or node_info.get("node_type", "node")).lower()
@@ -560,9 +599,8 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
             current_hop_index=packet.get("current_hop_index", 0),
             hops=packet.get("hops", [])
         )
-        should_retain = (node_status != "BLE_CLAIM_PENDING")
-        mqtt_client.publish_msg(f"{site}/{group}/{node_type}/{device_id}/status", status_payload, retain=should_retain)
-        print(f" Node {device_id} ({sender_mac_str}) status '{node_status}' forwarded to MQTT (retain={should_retain})")
+        mqtt_client.publish_msg(f"{site}/{group}/{node_type}/{device_id}/status", status_payload, retain=True)
+        print(f" Node {device_id} ({sender_mac_str}) status '{node_status}' forwarded to MQTT")
 
     elif msg_type in ("TELE", "TELEMETRY"):
         site = cfg.get("client", {}).get("site", "default_site")

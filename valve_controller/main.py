@@ -411,7 +411,8 @@ def main():
 
         # 4.2 Step 2: Notify Hub & Backend that Claim is Pending
         node_id = client_cfg.get("id", "valve_node")
-        espnow_client.send_ack_or_tele_to_hub("STATUS", {
+        espnow_client.send_ack_or_tele_to_hub("PROVISIONING", {
+            "step": "CLAIM_PENDING",
             "status": "BLE_CLAIM_PENDING",
             "node_id": node_id,
             "node_type": "VALVE",

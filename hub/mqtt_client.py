@@ -204,7 +204,10 @@ def on_message(topic, msg):
                         print("Error processing config update on HUB:", config_err)
                 return
             
-            command = data.get("cmd") or data.get("command") or data.get("state")
+            command = data.get("cmd") or data.get("command") or data.get("state") or data.get("step")
+            if topic_str.endswith("/provisioning") and not command:
+                if data.get("step") == "CONFIRM_PROVISION" or data.get("status") == "provision_confirmed":
+                    command = "CONFIRM_PROVISION"
             routing_path = payload.get("route", {}).get("hops", [])
             args = data
             
@@ -497,10 +500,14 @@ def mqtt_thread(heartbeats=None):
                 led_status.set_status("MQTT_CONNECTED")
                 print(" MQTT Connected!")
                 
-                # Subscribe to hub command and configuration topics
+                # Subscribe to hub command, configuration, and provisioning topics
+                prov_hub_topic = f"{site}/{group}/hub/{client_id}/provisioning"
+                prov_wildcard_topic = f"{site}/{group}/+/+/provisioning"
                 _client.subscribe(cmd_topic.encode('utf-8'))
                 _client.subscribe(config_topic.encode('utf-8'))
-                print(f" Subscribed to Hub topics: {cmd_topic}, {config_topic}")
+                _client.subscribe(prov_hub_topic.encode('utf-8'))
+                _client.subscribe(prov_wildcard_topic.encode('utf-8'))
+                print(f" Subscribed to Hub topics: {cmd_topic}, {config_topic}, {prov_hub_topic}, {prov_wildcard_topic}")
                 
                 client_mode = cfg.get("client", {}).get("mode", "normal")
                 is_pending_claim = (client_mode != "normal" and not _provision_confirmed)
