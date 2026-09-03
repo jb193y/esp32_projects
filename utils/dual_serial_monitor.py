@@ -176,7 +176,11 @@ def mqtt_monitor_worker(host, port, user, password, topics, stop_event):
                         timestamp = time.strftime("%H:%M:%S")
                         print(f"{COLOR_MQTT}[{timestamp}][MQTT]{COLOR_RESET} Topic={topic}, Payload={msg_payload}")
                         sys.stdout.flush()
-                except socket.timeout:
+                    elif pkt_type == 9:  # SUBACK
+                        pass
+                    elif pkt_type == 13:  # PINGRESP
+                        pass
+                except (socket.timeout, TimeoutError):
                     continue
                 except Exception as loop_err:
                     break
