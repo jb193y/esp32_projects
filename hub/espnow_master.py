@@ -560,8 +560,9 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
             current_hop_index=packet.get("current_hop_index", 0),
             hops=packet.get("hops", [])
         )
-        mqtt_client.publish_msg(f"{site}/{group}/{node_type}/{device_id}/status", status_payload, retain=True)
-        print(f" Node {device_id} ({sender_mac_str}) status '{node_status}' forwarded to MQTT")
+        should_retain = (node_status != "BLE_CLAIM_PENDING")
+        mqtt_client.publish_msg(f"{site}/{group}/{node_type}/{device_id}/status", status_payload, retain=should_retain)
+        print(f" Node {device_id} ({sender_mac_str}) status '{node_status}' forwarded to MQTT (retain={should_retain})")
 
     elif msg_type in ("TELE", "TELEMETRY"):
         site = cfg.get("client", {}).get("site", "default_site")
