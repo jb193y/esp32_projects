@@ -39,13 +39,13 @@ def _do_factory_reset(pin_num):
 
         try:
             import sys
-            sys.stdout.write("\r\n--- FACTORY RESET COMPLETE: REBOOTING ESP32 ---\r\n")
+            sys.stdout.write("\r\n--- FACTORY RESET COMPLETE: SOFT REBOOTING ESP32 ---\r\n")
             sys.stdout.flush()
         except Exception:
             pass
 
         time.sleep_ms(400)
-        machine.reset()
+        machine.soft_reset()
     except Exception as err:
         print("Factory reset fatal error:", err)
         _reset_scheduled = False
