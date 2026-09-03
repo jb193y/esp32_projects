@@ -23,6 +23,7 @@ ota_receiver = espnow_ota.OTAReceiver(espnow_client.send_ack_or_tele_to_hub)
 
 # Non-blocking command queue — receive thread enqueues, main loop executes
 _cmd_queue = []
+_provision_confirmed = False
 
 def save_valve_states():
     """Saves valve states to both RTC memory (for zero-wear deep sleep) and flash file."""
