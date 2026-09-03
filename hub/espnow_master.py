@@ -201,10 +201,11 @@ def send_espnow_msg(target_mac_str, msg_dict, routing_path=None, target_id=None)
     try:
         payload_str = config.compact_json(envelope)
         frame_bytes = config.make_frame(payload_str)
-        tx_queue.put((next_hop_bytes, frame_bytes, phys_mac, target_id or target_mac_str))
-        return True
+        if phys_mac != "ff:ff:ff:ff:ff:ff":
+            add_peer_safe(_e, next_hop_bytes)
+        return config.send_fragmented(_e, next_hop_bytes, frame_bytes)
     except Exception as e:
-        print(" Failed to enqueue ESP-NOW packet:", e)
+        print(" Failed to send ESP-NOW packet:", e)
         return False
 
 # Initialize OTASender instance for ESP-NOW firmware broadcasting
@@ -412,52 +413,7 @@ def dispatch_command_from_mqtt(target_node, command, routing_path, args):
         # 2. Also send directly in case the node is currently awake
         send_espnow_msg(target_mac_str, cmd_msg, mac_routing_path, target_id=target_node)
 
-def hub_tx_loop():
-    global _e
-    print(" ESP-NOW Master TX Loop Thread Started")
-    while True:
-        try:
-            item = tx_queue.get()
-            if item is None:
-                time.sleep_ms(50)  # Yield CPU
-                continue
-                
-            next_hop_bytes, payload_bytes, phys_mac, target_id = item
-            
-            if _e is None:
-                time.sleep_ms(100)
-                tx_queue.put(item)
-                continue
-                
-            try:
-                if phys_mac != "ff:ff:ff:ff:ff:ff":
-                    add_peer_safe(_e, next_hop_bytes)
-                res = config.send_fragmented(_e, next_hop_bytes, payload_bytes)
-                if phys_mac == "ff:ff:ff:ff:ff:ff":
-                    print(" ESP-NOW broadcasted message")
-                else:
-                    print(f" ESP-NOW unicasted message to {phys_mac}")
-            except Exception as send_err:
-                print(" [Hub TX Queue] ESP-NOW send error:", send_err)
-                if "buffer error" in str(send_err):
-                    try:
-                        _e.active(False)
-                    except:
-                        pass
-                    time.sleep_ms(50)
-                    try:
-                        _e = espnow.ESPNow()
-                        _e.active(True)
-                        _e.config(rxbuf=4096)
-                        reregister_peers(_e)
-                    except:
-                        pass
-            
-            time.sleep_ms(50)
-            
-        except Exception as loop_err:
-            print(" [Hub TX Queue] Error in tx loop:", loop_err)
-            time.sleep_ms(100)
+
 
 def process_espnow_frame(sender_mac_str, payload_bytes):
     try:
@@ -952,14 +908,8 @@ def espnow_receiver_thread(heartbeats=None):
     if not sta.active():
         try:
             sta.active(True)
-        except Exception as sta_err:
-            print("STA active notice:", sta_err)
-
-    try:
-        ap = network.WLAN(network.AP_IF)
-        ap.active(False)
-    except:
-        pass
+        except Exception:
+            pass
 
     try:
         cfg = config.load_config()
@@ -988,10 +938,6 @@ def espnow_receiver_thread(heartbeats=None):
         reregister_peers(_e)
 
     init_real_espnow()
-    
-    # Spawn Hub TX loop
-    import _thread
-    _thread.start_new_thread(hub_tx_loop, ())
     
     print(" ESP-NOW Master Receiver active and listening")
 
@@ -1048,6 +994,7 @@ def espnow_receiver_thread(heartbeats=None):
                 continue
 
             sender_mac_str = bytes_to_mac(host)
+            print(f" [Hub ESP-NOW RX] Received {len(msg)} bytes from {sender_mac_str}")
             
             if now - recv_last_seen.get(sender_mac_str, now) > 10:
                 recv_buffers[sender_mac_str] = b""
