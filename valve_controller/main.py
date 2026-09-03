@@ -255,6 +255,28 @@ def execute_command(cmd, args, sender_mac=None):
         time.sleep_ms(300)
         machine.reset()
 
+    elif cmd in ("CONFIRM_PROVISION", "CLAIM_CONFIRM"):
+        global _provision_confirmed
+        print(" Provisioning Claim Confirmed by Backend!")
+        _provision_confirmed = True
+        try:
+            cfg = config.load_config()
+            cfg.setdefault("client", {})["mode"] = "normal"
+            config.save_config(cfg)
+        except Exception as ex:
+            print("Error updating mode to normal:", ex)
+
+        any_open = any(v.get("state") == "OPEN" for v in valves.values())
+        node_id = cfg.get("client", {}).get("id", "valve_node")
+        espnow_client.send_ack_or_tele_to_hub("ACK", {
+            "status": "provisioned",
+            "device_id": node_id,
+            "node_status": "online",
+            "valves": {vid: v["state"] for vid, v in valves.items()}
+        }, target_mac=sender_mac)
+        
+        led_status.set_status("VALVE_CLOSED")
+
     elif cmd == "OTA":
         print(" OTA command received:", args)
         if isinstance(args, dict) and "action" in args:
@@ -359,36 +381,72 @@ def main():
     
     # Initialize ESP-NOW client
     espnow_client.init_espnow_client()
-    
-    # Check if Deep Sleep is enabled
+    heartbeats = {"esp_now": time.time()}
+    _thread.start_new_thread(espnow_client.client_tx_loop, ())
+    _thread.start_new_thread(espnow_client.client_listen_loop, (heartbeats, handle_hub_commands))
+
+    # 4. Handle "pending_confirm" Provisioning Claim Workflow (Same as Hub):
+    if mode == "pending_confirm":
+        print(" Device in BLE pending_confirm mode. Starting Hub pairing & claim confirmation...")
+        led_status.set_status("BLE_PROVISIONING")
+
+        # 4.1 Step 1: Pair with Hub via ESP-NOW
+        pair_start = time.time()
+        while not espnow_client.is_paired() and (time.time() - pair_start < 45):
+            if _cmd_queue:
+                cmd, args, sender_mac = _cmd_queue.pop(0)
+                execute_command(cmd, args, sender_mac)
+            time.sleep_ms(100)
+
+        if not espnow_client.is_paired():
+            print(" Hub pairing timed out (45s). Reverting to BLE setup mode...")
+            cfg.setdefault("client", {})["mode"] = "ble_setup"
+            config.save_config(cfg)
+            time.sleep(1)
+            machine.reset()
+            return
+
+        print(" Connected to Hub via ESP-NOW! Notifying Hub & Backend that Claim is Pending...")
+
+        # 4.2 Step 2: Notify Hub & Backend that Claim is Pending
+        node_id = client_cfg.get("id", "valve_node")
+        espnow_client.send_ack_or_tele_to_hub("STATUS", {
+            "status": "BLE_CLAIM_PENDING",
+            "node_id": node_id,
+            "node_type": "VALVE",
+            "custom_name": client_cfg.get("custom_name", node_id),
+            "site": client_cfg.get("site", "default_site")
+        })
+
+        # 4.3 Step 3: Wait up to 90s for CONFIRM_PROVISION from Backend
+        claim_start = time.time()
+        print(" Device in claim wait mode. Waiting up to 90s for confirmation from backend...")
+        while not _provision_confirmed and (time.time() - claim_start < 90):
+            if _cmd_queue:
+                cmd, args, sender_mac = _cmd_queue.pop(0)
+                execute_command(cmd, args, sender_mac)
+                if _provision_confirmed:
+                    break
+            time.sleep_ms(100)
+
+        if not _provision_confirmed:
+            print(" Claim confirmation window (90s) elapsed! Reverting to BLE setup mode...")
+            cfg.setdefault("client", {})["mode"] = "ble_setup"
+            config.save_config(cfg)
+            time.sleep(1)
+            machine.reset()
+            return
+
+        print(" Provisioning & Claiming Complete! Mode updated to 'normal'.")
+        led_status.set_status("VALVE_CLOSED")
+
+    # 5. Normal Operations
     deep_sleep_enabled = client_cfg.get("deep_sleep_enabled", True)
     deep_sleep_sec = int(client_cfg.get("deep_sleep_sec", 30))
 
     if deep_sleep_enabled:
         print(f" [Power Mode] Deep Sleep Configured (Sleep interval: {deep_sleep_sec}s)")
-        
-        # Start background threads for fast message exchange
-        heartbeats = {"esp_now": time.time()}
-        _thread.start_new_thread(espnow_client.client_tx_loop, ())
-        _thread.start_new_thread(espnow_client.client_listen_loop, (heartbeats, handle_hub_commands))
 
-        # 0. Active Pairing Phase: If not paired, stay awake up to 45s to complete handshake
-        if not espnow_client.is_paired():
-            print(" Node uncommissioned / not paired. Entering Active Pairing Mode (staying awake)...")
-            led_status.set_status("BLE_PROVISIONING")
-            pair_start = time.time()
-            while not espnow_client.is_paired() and (time.time() - pair_start < 45):
-                if _cmd_queue:
-                    cmd, args, sender_mac = _cmd_queue.pop(0)
-                    execute_command(cmd, args, sender_mac)
-                time.sleep_ms(100)
-
-            if espnow_client.is_paired():
-                print(" Pairing successful! Transitioning to operational mode...")
-                led_status.set_status("VALVE_CLOSED")
-            else:
-                print(" Pairing window elapsed. Will re-attempt on next wake cycle.")
-        
         # 1. Send Check-In / Telemetry to Hub
         any_open = any(v.get("state") == "OPEN" for v in valves.values())
         node_status = "watering" if any_open else "valve_idle"

@@ -546,8 +546,38 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
             route_id="hub_discovery_notice",
             current_hop_index=0,
             hops=["backend_api"]
-        )
         mqtt_client.publish_msg("farm/config/new_node_added", new_node_payload)
+
+    elif msg_type == "STATUS":
+        site = cfg.get("client", {}).get("site", "default_site")
+        group = cfg.get("client", {}).get("group", "all")
+        if site == "default_site":
+            return
+
+        nodes = load_nodes()
+        node_info = nodes.get(sender_mac_str, {})
+        node_type = (data.get("node_type") or node_info.get("node_type", "node")).lower()
+        device_id = (data.get("node_id") or node_info.get("node_id", sender_mac_str.replace(':', ''))).lower()
+        node_status = data.get("status", "online")
+
+        status_payload = message_builder.build_mqtt_payload(
+            source=device_id,
+            target="backend_api",
+            msg_type="STATUS",
+            data={
+                "device_id": device_id,
+                "status": node_status,
+                "node_type": node_type.upper(),
+                "mac": sender_mac_str,
+                "custom_name": data.get("custom_name") or node_info.get("custom_name", device_id)
+            },
+            route_transport="ESPNOW",
+            route_id=packet.get("route", {}).get("route_id") or packet.get("route", {}).get("rid", "direct"),
+            current_hop_index=packet.get("current_hop_index", 0),
+            hops=packet.get("hops", [])
+        )
+        mqtt_client.publish_msg(f"{site}/{group}/{node_type}/{device_id}/status", status_payload, retain=True)
+        print(f" Node {device_id} ({sender_mac_str}) status '{node_status}' forwarded to MQTT")
 
     elif msg_type in ("TELE", "TELEMETRY"):
         site = cfg.get("client", {}).get("site", "default_site")
