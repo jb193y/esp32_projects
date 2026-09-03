@@ -67,11 +67,20 @@ def encode_varlen(n):
             break
     return bytes(res)
 
+def recv_exact(sock, n):
+    buf = bytearray()
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            return None
+        buf.extend(chunk)
+    return bytes(buf)
+
 def decode_varlen(sock):
     multiplier = 1
     value = 0
     while True:
-        b = sock.recv(1)
+        b = recv_exact(sock, 1)
         if not b:
             return None
         byte_val = b[0]
@@ -83,6 +92,7 @@ def decode_varlen(sock):
 
 def mqtt_monitor_worker(host, port, user, password, topics, stop_event):
     """Pure-Python standard library MQTT 3.1.1 Subscriber (Zero dependencies)."""
+    import select
     while not stop_event.is_set():
         sock = None
         try:
@@ -91,7 +101,7 @@ def mqtt_monitor_worker(host, port, user, password, topics, stop_event):
             sock.connect((host, port))
             
             # 1. Build MQTT 3.1.1 CONNECT Packet
-            client_id = f"dual_mon_{int(time.time())}".encode('utf-8')
+            client_id = f"dual_mon_{int(time.time()*1000)%100000}".encode('utf-8')
             u_bytes = user.encode('utf-8') if user else b""
             p_bytes = password.encode('utf-8') if password else b""
             
@@ -101,12 +111,10 @@ def mqtt_monitor_worker(host, port, user, password, topics, stop_event):
             if password:
                 connect_flags |= 0x40
 
-            # Variable header
-            var_header = bytearray(b"\x00\x04MQTT\x04")  # Protocol name & level 4 (3.1.1)
+            var_header = bytearray(b"\x00\x04MQTT\x04")
             var_header.append(connect_flags)
             var_header.extend(b"\x00\x3c")  # Keepalive 60s
             
-            # Payload
             payload = bytearray()
             payload.extend(len(client_id).to_bytes(2, 'big') + client_id)
             if user:
@@ -117,10 +125,9 @@ def mqtt_monitor_worker(host, port, user, password, topics, stop_event):
             connect_packet = b"\x10" + encode_varlen(len(var_header) + len(payload)) + var_header + payload
             sock.sendall(connect_packet)
             
-            # 2. Read CONNACK
-            connack = sock.recv(4)
-            if len(connack) < 4 or connack[3] != 0:
-                print(f"{COLOR_ERR}[MQTT] Connection rejected by broker (code: {connack[3] if len(connack)>=4 else 'err'}){COLOR_RESET}")
+            connack = recv_exact(sock, 4)
+            if not connack or len(connack) < 4 or connack[3] != 0:
+                print(f"{COLOR_ERR}[MQTT] Connection rejected by broker{COLOR_RESET}")
                 sock.close()
                 time.sleep(3)
                 continue
@@ -128,19 +135,17 @@ def mqtt_monitor_worker(host, port, user, password, topics, stop_event):
             print(f"{COLOR_INFO}[MQTT] Connected to {host}:{port}. Subscribed to: {', '.join(topics)}{COLOR_RESET}")
             sys.stdout.flush()
             
-            # 3. Send SUBSCRIBE Packet
             sub_payload = bytearray()
             for t in topics:
                 t_bytes = t.encode('utf-8')
-                sub_payload.extend(len(t_bytes).to_bytes(2, 'big') + t_bytes + b"\x00")  # QoS 0
+                sub_payload.extend(len(t_bytes).to_bytes(2, 'big') + t_bytes + b"\x00")
             
             packet_id = 1
             sub_var_header = packet_id.to_bytes(2, 'big')
             sub_packet = b"\x82" + encode_varlen(len(sub_var_header) + len(sub_payload)) + sub_var_header + sub_payload
             sock.sendall(sub_packet)
 
-            import select
-            sock.setblocking(True)
+            sock.settimeout(5.0)
             last_ping = time.time()
             
             while not stop_event.is_set():
@@ -155,40 +160,34 @@ def mqtt_monitor_worker(host, port, user, password, topics, stop_event):
                 if not r:
                     continue
 
-                try:
-                    header = sock.recv(1)
-                    if not header:
-                        break
-                    pkt_type = header[0] >> 4
-                    rem_len = decode_varlen(sock)
-                    if rem_len is None:
-                        break
-                        
-                    raw_body = bytearray()
-                    while len(raw_body) < rem_len:
-                        chunk = sock.recv(min(rem_len - len(raw_body), 4096))
-                        if not chunk:
-                            break
-                        raw_body.extend(chunk)
-                        
-                    if pkt_type == 3:  # PUBLISH
-                        qos = (header[0] >> 1) & 0x03
-                        topic_len = int.from_bytes(raw_body[0:2], 'big')
-                        topic = raw_body[2:2+topic_len].decode('utf-8', errors='replace')
-                        payload_offset = 2 + topic_len
-                        if qos > 0:
-                            payload_offset += 2  # Skip Packet ID
-                        msg_payload = raw_body[payload_offset:].decode('utf-8', errors='replace')
-                        
-                        timestamp = time.strftime("%H:%M:%S")
-                        print(f"{COLOR_MQTT}[{timestamp}][MQTT]{COLOR_RESET} Topic={topic}, Payload={msg_payload}")
-                        sys.stdout.flush()
-                    elif pkt_type == 9:  # SUBACK
-                        pass
-                    elif pkt_type == 13:  # PINGRESP
-                        pass
-                except Exception as loop_err:
+                header = sock.recv(1)
+                if not header:
                     break
+                pkt_type = header[0] >> 4
+                rem_len = decode_varlen(sock)
+                if rem_len is None:
+                    break
+                    
+                raw_body = recv_exact(sock, rem_len)
+                if not raw_body:
+                    break
+                    
+                if pkt_type == 3:  # PUBLISH
+                    qos = (header[0] >> 1) & 0x03
+                    topic_len = int.from_bytes(raw_body[0:2], 'big')
+                    topic = raw_body[2:2+topic_len].decode('utf-8', errors='replace')
+                    payload_offset = 2 + topic_len
+                    if qos > 0:
+                        payload_offset += 2  # Skip Packet ID
+                    msg_payload = raw_body[payload_offset:].decode('utf-8', errors='replace')
+                    
+                    timestamp = time.strftime("%H:%M:%S")
+                    print(f"{COLOR_MQTT}[{timestamp}][MQTT]{COLOR_RESET} Topic={topic}, Payload={msg_payload}")
+                    sys.stdout.flush()
+                elif pkt_type == 9:  # SUBACK
+                    pass
+                elif pkt_type == 13:  # PINGRESP
+                    pass
         except Exception as e:
             pass
         finally:
