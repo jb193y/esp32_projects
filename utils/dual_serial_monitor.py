@@ -203,8 +203,8 @@ def main():
     parser.add_argument("--mqtt-host", default="10.10.10.211", help="MQTT broker IP (default: 10.10.10.211)")
     parser.add_argument("--mqtt-port", type=int, default=1883, help="MQTT broker port (default: 1883)")
     parser.add_argument("--mqtt-topic", "-t", action="append", default=None, help="MQTT topic pattern to monitor (can specify multiple)")
-    parser.add_argument("--mqtt-user", default="aziladmin", help="MQTT username")
-    parser.add_argument("--mqtt-pass", default="secretpassword", help="MQTT password")
+    parser.add_argument("--mqtt-user", default="mss_client", help="MQTT username (default: mss_client)")
+    parser.add_argument("--mqtt-pass", default="Xgs7%67$!@#_", help="MQTT password")
 
     args = parser.parse_args()
 
