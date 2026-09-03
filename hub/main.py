@@ -24,10 +24,10 @@ def main():
     print("Hub Master Controller Loading...")
     gc.collect()
 
-    # 2. Configure default thread stack size to 4KB (saves ~30KB RAM over 8KB)
+    # 2. Configure default thread stack size to 8KB (safe for JSON & Flash I/O)
     try:
-        _thread.stack_size(4096)
-        print("Default thread stack size configured to 4KB")
+        _thread.stack_size(8192)
+        print("Default thread stack size configured to 8KB")
     except Exception as ex:
         print("Failed to configure thread stack size:", ex)
     
