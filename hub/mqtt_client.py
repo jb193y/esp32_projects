@@ -316,15 +316,23 @@ def on_message(topic, msg):
                 cfg.setdefault("client", {})["mode"] = "normal"
                 led_status.set_status("MQTT_CONNECTED")
                 
+                c_client = cfg.get("client", {})
+                c_id = c_client.get("id", client_id)
+                c_type = c_client.get("type", "hub").lower()
+                c_site = c_client.get("site", "loc001")
+                c_group = c_client.get("group", "all")
+                c_cmd_topic = f"{c_site}/{c_group}/{c_type}/{c_id}/command"
+                c_status_topic = f"{c_site}/{c_group}/{c_type}/{c_id}/status"
+
                 # Clear retained command on broker
                 try:
-                    _client.publish(cmd_topic.encode('utf-8'), b"", retain=True)
+                    _client.publish(c_cmd_topic.encode('utf-8'), b"", retain=True)
                 except Exception:
                     pass
                 
                 # Publish official online status and initial telemetry
-                publish_msg(status_topic, {
-                    "source": client_id,
+                publish_msg(c_status_topic, {
+                    "source": c_id,
                     "target": "backend_api",
                     "msg_type": "STATUS",
                     "timestamp": config.get_unix_time(),
@@ -332,13 +340,13 @@ def on_message(topic, msg):
                         "transport": "MQTT",
                         "route_id": "direct",
                         "current_hop_index": 0,
-                        "hops": [client_id],
+                        "hops": [c_id],
                         "link_diagnostics": []
                     },
                     "data": {
-                        "device_id": client_id,
+                        "device_id": c_id,
                         "status": "online",
-                        "fw_ver": cfg.get("client", {}).get("firmware_version", "hub_v1.0.0")
+                        "fw_ver": c_client.get("firmware_version", "hub_v1.0.0")
                     }
                 }, retain=True)
                 publish_hub_telemetry("Enabled")
