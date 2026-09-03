@@ -168,6 +168,9 @@ def on_message(topic, msg):
         # Check if it is the standardized JSON envelope
         if "source" in payload and "target" in payload and "msg_type" in payload and "data" in payload:
             target_device = payload.get("target")
+            # Ignore upstream messages targeted to backend_api (reflected from wildcard subscriptions)
+            if target_device == "backend_api":
+                return
             msg_type = payload.get("msg_type")
             data = payload.get("data", {})
             
