@@ -143,7 +143,8 @@ def update_device_config(data):
     node_id = data.get("node_id") or data.get("client_id")
     if node_id:
         cfg.setdefault("client", {})["id"] = node_id
-        cfg.setdefault("mqtt", {})["topic_prefix"] = f"farm/{node_id}"
+        site_val = data.get("site") or cfg.get("client", {}).get("site", "loc001")
+        cfg.setdefault("mqtt", {})["topic_prefix"] = f"{site_val}/all/{node_id}"
         print(f" Node ID updated: {node_id}")
 
     # 7. Time initialization

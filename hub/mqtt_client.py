@@ -62,9 +62,20 @@ _is_connected = False
 _enabled = True
 _provision_confirmed = False
 _provision_start_time = 0
+_last_telemetry_time = 0
 
 # Callback from espnow_master to dispatch commands
 _cmd_dispatcher = None
+
+def is_provision_confirmed():
+    global _provision_confirmed
+    if _provision_confirmed:
+        return True
+    try:
+        cfg = config.load_config()
+        return cfg.get("client", {}).get("mode", "normal") == "normal"
+    except Exception:
+        return False
 
 def register_cmd_dispatcher(dispatcher):
     global _cmd_dispatcher
@@ -115,6 +126,8 @@ def publish_hub_telemetry(status_val):
             }
         }
         publish_msg(tele_topic, payload)
+        global _last_telemetry_time
+        _last_telemetry_time = time.time()
         print(f"Published Hub telemetry: {status_val} to {tele_topic}")
     except Exception as e:
         print("Error publishing Hub telemetry:", e)
@@ -161,8 +174,6 @@ def on_message(topic, msg):
         payload_str = msg.decode('utf-8').strip()
         if not payload_str:
             return
-        print(f"MQTT Received: Topic={topic_str}, Payload={payload_str}")
-        
         payload = ujson.loads(payload_str)
         
         # Check if it is the standardized JSON envelope
@@ -171,6 +182,7 @@ def on_message(topic, msg):
             # Ignore upstream messages targeted to backend_api (reflected from wildcard subscriptions)
             if target_device == "backend_api":
                 return
+            print(f"MQTT Received: Topic={topic_str}, Payload={payload_str}")
             msg_type = payload.get("msg_type")
             data = payload.get("data", {})
             
@@ -507,14 +519,14 @@ def mqtt_thread(heartbeats=None):
                 led_status.set_status("MQTT_CONNECTED")
                 print(" MQTT Connected!")
                 
-                # Subscribe to hub command, configuration, and provisioning topics
+                # Subscribe to command, configuration, and provisioning topics
+                cmd_topic = f"{site}/{group}/+/+/command"
                 prov_hub_topic = f"{site}/{group}/hub/{client_id}/provisioning"
                 prov_wildcard_topic = f"{site}/{group}/+/+/provisioning"
                 _client.subscribe(cmd_topic.encode('utf-8'))
                 _client.subscribe(config_topic.encode('utf-8'))
-                _client.subscribe(prov_hub_topic.encode('utf-8'))
                 _client.subscribe(prov_wildcard_topic.encode('utf-8'))
-                print(f" Subscribed to Hub topics: {cmd_topic}, {config_topic}, {prov_hub_topic}, {prov_wildcard_topic}")
+                print(f" Subscribed to Hub topics: {cmd_topic}, {config_topic}, {prov_wildcard_topic}")
                 
                 client_mode = cfg.get("client", {}).get("mode", "normal")
                 is_pending_claim = (client_mode != "normal" and not _provision_confirmed)
@@ -573,7 +585,7 @@ def mqtt_thread(heartbeats=None):
                     _provision_start_time = time.time()
                     print(" Waiting for MQTT command 'CONFIRM_PROVISION' from backend API (90s window)...")
                     try:
-                        led_status.set_status("START_DISCOVERY")
+                        led_status.set_status("WIFI_CONNECTED")
                     except Exception:
                         pass
                 
@@ -640,9 +652,8 @@ def mqtt_thread(heartbeats=None):
         # Periodically publish hub status telemetry ONLY when claim is completed (mode: normal)
         client_mode = cfg.get("client", {}).get("mode", "normal")
         is_normal_operating = (client_mode == "normal" or _provision_confirmed)
-        if _is_connected and is_normal_operating and (now - last_telemetry_time > telemetry_interval):
+        if _is_connected and is_normal_operating and (now - _last_telemetry_time > telemetry_interval):
             hub_status = cfg.get("client", {}).get("status", "Enabled")
             publish_hub_telemetry(hub_status)
-            last_telemetry_time = now
             
         time.sleep(0.1)

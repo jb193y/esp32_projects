@@ -252,7 +252,9 @@ def dispatch_command_from_mqtt(target_node, command, routing_path, args):
                 "hub_id": client_id
             }
         }
-        mqtt_client.publish_msg(f"farm/{client_id}/discovery_status", resp)
+        site = cfg.get("client", {}).get("site", "loc001")
+        group = cfg.get("client", {}).get("group", "all")
+        mqtt_client.publish_msg(f"{site}/{group}/hub/{client_id}/discovery_status", resp)
         print(f" Discovery Mode triggered via MQTT for {duration} seconds.")
         return
 
@@ -456,6 +458,16 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
             except Exception as ex:
                 print("Error setting inline ESP-NOW resource surplus:", ex)
 
+    # Hub must be confirmed provisioned before discovering, pairing, or provisioning child nodes
+    if msg_type in ("DISCOVERY_REQ", "PAIR_REQ", "PROVISIONING", "PROV") or (msg_type == "STATUS" and isinstance(data, dict) and data.get("status") in ("pairing_request", "BLE_CLAIM_PENDING")):
+        try:
+            import mqtt_client
+            if not mqtt_client.is_provision_confirmed():
+                print(f" [Hub Notice] Ignoring {msg_type} from {sender_mac_str} - Hub itself is not confirmed provisioned yet.")
+                return
+        except Exception as check_err:
+            print("Error checking Hub provision status:", check_err)
+
     if msg_type == "DISCOVERY_REQ":
         print(f"DISCOVERY_REQ from {sender_mac_str} ({source})")
         active_ch = 6
@@ -506,31 +518,7 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
             "payload": {"status": "paired", "hub_mac": hub_sta_mac, "channel": active_ch}
         }, routing_path=reverse_path, target_id=node_id)
 
-        type_slug = node_type.lower()
-        device_id = node_info.get("node_id", "").lower() or actual_mac.replace(':', '')
-
-        site = cfg.get("client", {}).get("site", "default_site")
-        group = cfg.get("client", {}).get("group", "all")
-
-        if site == "default_site":
-            return
-
-        new_node_payload = message_builder.build_mqtt_payload(
-            source="hub_master_01",
-            target="backend_api",
-            msg_type="STATUS",
-            data={
-                "mac": actual_mac,
-                "device_type": node_type,
-                "device_id": device_id,
-                "custom_name": node_info["custom_name"]
-            },
-            route_transport="MQTT",
-            route_id="hub_discovery_notice",
-            current_hop_index=0,
-            hops=["backend_api"]
-        )
-        mqtt_client.publish_msg("farm/config/new_node_added", new_node_payload)
+        # Pairing completed over ESP-NOW. Node will next send PROVISIONING step.
 
     elif msg_type in ("PROVISIONING", "PROV") or (msg_type == "STATUS" and data.get("status") == "BLE_CLAIM_PENDING"):
         site = cfg.get("client", {}).get("site", "default_site")
@@ -987,7 +975,13 @@ def espnow_receiver_thread(heartbeats=None):
             heartbeats["esp_now"] = time.time()
 
         now = config.get_unix_time()
-        if now < _discovery_active_until:
+        try:
+            import mqtt_client
+            hub_ready = mqtt_client.is_provision_confirmed()
+        except Exception:
+            hub_ready = False
+
+        if now < _discovery_active_until and hub_ready:
             if not was_discovery_active:
                 was_discovery_active = True
                 try:
