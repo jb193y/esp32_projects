@@ -169,7 +169,7 @@ def mqtt_monitor_worker(host, port, user, password, topics, stop_event):
                     break
                     
                 raw_body = recv_exact(sock, rem_len)
-                if not raw_body:
+                if raw_body is None:
                     break
                     
                 if pkt_type == 3:  # PUBLISH
