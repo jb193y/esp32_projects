@@ -24,10 +24,10 @@ def main():
     print("Hub Master Controller Loading...")
     gc.collect()
 
-    # 2. Configure default thread stack size to 8KB (safe for JSON & Flash I/O)
+    # 2. Configure default thread stack size to 6KB (safe for JSON/Flash I/O without FreeRTOS exhaustion)
     try:
-        _thread.stack_size(8192)
-        print("Default thread stack size configured to 8KB")
+        _thread.stack_size(6144)
+        print("Default thread stack size configured to 6KB")
     except Exception as ex:
         print("Failed to configure thread stack size:", ex)
     
@@ -107,37 +107,18 @@ def main():
         _thread.start_new_thread(mqtt_client.mqtt_thread, (heartbeats,))
         time.sleep_ms(200)
 
-        # 6.3 Start ESP-NOW Master receiver
-        _thread.start_new_thread(espnow_master.espnow_receiver_thread, (heartbeats,))
+        # 6.3 Start Scheduler
+        _thread.start_new_thread(scheduler.scheduler_thread, (heartbeats, espnow_master.send_espnow_msg))
         time.sleep_ms(200)
 
-        # 6.4 Start Scheduler
-        _thread.start_new_thread(scheduler.scheduler_thread, (heartbeats, espnow_master.send_espnow_msg))
-    
     gc.collect()
     print("All Hub systems active! Free heap:", gc.mem_free())
-    
-    last_checked_system_time = time.time()
-    while True:
-        gc.collect()
-        time.sleep(10)
-        
-        now = time.time()
-        # Detect if system clock jumped (e.g. via NTP sync)
-        time_diff = now - last_checked_system_time
-        if abs(time_diff) > 100:
-            print(f"Watchdog: System clock jump detected (diff={time_diff}s). Adjusting heartbeats.")
-            for name in heartbeats:
-                heartbeats[name] = now
 
-        last_checked_system_time = now
-
-        for name, last_time in heartbeats.items():
-            age = now - last_time
-            if age > 90:
-                print(f"Watchdog: Thread '{name}' stalled ({age}s ago). Rebooting...")
-                time.sleep(1)
-                machine.reset()
+    # 6.4 Run ESP-NOW Master Receiver directly on the main execution thread (0 thread spawn overhead)
+    if espnow_only:
+        espnow_master.espnow_test_receiver_thread(heartbeats)
+    else:
+        espnow_master.espnow_receiver_thread(heartbeats)
 
 if __name__ == "__main__":
     try:
