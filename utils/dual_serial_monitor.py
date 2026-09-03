@@ -139,14 +139,21 @@ def mqtt_monitor_worker(host, port, user, password, topics, stop_event):
             sub_packet = b"\x82" + encode_varlen(len(sub_var_header) + len(sub_payload)) + sub_var_header + sub_payload
             sock.sendall(sub_packet)
 
-            # 4. Receive Loop
-            sock.settimeout(1.0)
+            import select
+            sock.setblocking(True)
             last_ping = time.time()
             
             while not stop_event.is_set():
                 if time.time() - last_ping > 25:
-                    sock.sendall(b"\xc0\x00")  # PINGREQ
-                    last_ping = time.time()
+                    try:
+                        sock.sendall(b"\xc0\x00")  # PINGREQ
+                        last_ping = time.time()
+                    except Exception:
+                        break
+
+                r, _, _ = select.select([sock], [], [], 0.5)
+                if not r:
+                    continue
 
                 try:
                     header = sock.recv(1)
@@ -180,8 +187,6 @@ def mqtt_monitor_worker(host, port, user, password, topics, stop_event):
                         pass
                     elif pkt_type == 13:  # PINGRESP
                         pass
-                except (socket.timeout, TimeoutError):
-                    continue
                 except Exception as loop_err:
                     break
         except Exception as e:
