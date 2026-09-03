@@ -468,6 +468,7 @@ def mqtt_thread(heartbeats=None):
     telemetry_interval = mqtt_cfg.get("telemetry_interval_sec", 30)
     
     last_telemetry_time = 0
+    last_ping_time = 0
     
     while True:
         if heartbeats is not None:
@@ -581,8 +582,22 @@ def mqtt_thread(heartbeats=None):
                 print("MQTT connection error check:", e)
                 _is_connected = False
         
-        # Periodically publish hub status telemetry ONLY when claim is completed (mode: normal)
         now = time.time()
+
+        # Send MQTT PINGREQ keepalive to broker to maintain active session and prevent LWT triggers
+        if _is_connected and (now - last_ping_time > 15):
+            try:
+                _lock.acquire()
+                try:
+                    _client.ping()
+                finally:
+                    _lock.release()
+                last_ping_time = now
+            except Exception as ping_err:
+                print("MQTT ping error (connection dropped):", ping_err)
+                _is_connected = False
+
+        # Periodically publish hub status telemetry ONLY when claim is completed (mode: normal)
         client_mode = cfg.get("client", {}).get("mode", "normal")
         is_normal_operating = (client_mode == "normal" or _provision_confirmed)
         if _is_connected and is_normal_operating and (now - last_telemetry_time > telemetry_interval):
