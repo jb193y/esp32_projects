@@ -249,15 +249,14 @@ def start_provisioning():
                         ble_instance.active(False)
                         ble_instance = None
                 except Exception as ble_shutdown_err:
-                    print(" BLE shutdown notice:", ble_shutdown_err)
                 try:
                     import sys
-                    sys.stdout.write("\r\n--- BLE PROVISIONING COMPLETE: REBOOTING ESP32 ---\r\n")
+                    sys.stdout.write("\r\n--- BLE PROVISIONING COMPLETE: SOFT REBOOTING ESP32 ---\r\n")
                     sys.stdout.flush()
                 except Exception:
                     pass
                 time.sleep_ms(300)
-                machine.reset()
+                machine.soft_reset()
             except Exception as e:
                 print("Failed to parse/apply BLE config payload:", e)
         time.sleep(0.5)

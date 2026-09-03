@@ -99,7 +99,7 @@ def _provision_confirmation_timer_bg():
 
         try:
             import machine
-            machine.reset()
+            machine.soft_reset()
         except Exception:
             pass
 
