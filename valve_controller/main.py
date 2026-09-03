@@ -401,9 +401,9 @@ def main():
         espnow_client.send_ack_or_tele_to_hub("TELE", telemetry)
         print(" Check-In Telemetry sent to Hub. Listening for commands...")
 
-        # 2. Wait up to 1000ms for incoming Hub response / mailbox commands
-        start_wait = time.time()
-        while time.time() - start_wait < 1.0:
+        # 2. Wait up to 1500ms for incoming Hub response / mailbox commands
+        start_wait = time.ticks_ms()
+        while time.ticks_diff(time.ticks_ms(), start_wait) < 1500:
             if _cmd_queue:
                 cmd, args, sender_mac = _cmd_queue.pop(0)
                 execute_command(cmd, args, sender_mac)
