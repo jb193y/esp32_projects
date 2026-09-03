@@ -532,12 +532,6 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
         )
         mqtt_client.publish_msg("farm/config/new_node_added", new_node_payload)
 
-    elif msg_type == "STATUS":
-        site = cfg.get("client", {}).get("site", "default_site")
-        group = cfg.get("client", {}).get("group", "all")
-        if site == "default_site":
-            return
-
     elif msg_type in ("PROVISIONING", "PROV") or (msg_type == "STATUS" and data.get("status") == "BLE_CLAIM_PENDING"):
         site = cfg.get("client", {}).get("site", "default_site")
         group = cfg.get("client", {}).get("group", "all")
