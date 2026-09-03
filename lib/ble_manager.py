@@ -249,6 +249,7 @@ def start_provisioning():
                         ble_instance.active(False)
                         ble_instance = None
                 except Exception as ble_shutdown_err:
+                    pass
                 try:
                     import sys
                     sys.stdout.write("\r\n--- BLE PROVISIONING COMPLETE: SOFT REBOOTING ESP32 ---\r\n")
