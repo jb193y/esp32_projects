@@ -118,6 +118,15 @@ def get_hub_id():
     return "hub_master_01"
 
 def is_paired():
+    global _paired
+    if not _paired:
+        try:
+            cfg = config.load_config()
+            hub_mac = cfg.get("hub", {}).get("mac", "")
+            if hub_mac and hub_mac != "00:00:00:00:00:00":
+                _paired = True
+        except Exception:
+            pass
     return _paired
 
 def set_paired(val):
