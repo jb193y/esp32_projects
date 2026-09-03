@@ -515,23 +515,6 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
         if site == "default_site":
             return
 
-        status_payload = message_builder.build_mqtt_payload(
-            source=device_id,
-            target="backend_api",
-            msg_type="STATUS",
-            data={
-                "device_id": device_id,
-                "status": "online",
-                "node_type": node_type,
-                "mac": actual_mac
-            },
-            route_transport="ESPNOW",
-            route_id=packet.get("route", {}).get("route_id") or packet.get("route", {}).get("rid", "direct"),
-            current_hop_index=packet.get("current_hop_index", 0),
-            hops=packet.get("hops", [])
-        )
-        mqtt_client.publish_msg(f"{site}/{group}/{type_slug}/{device_id}/status", status_payload, retain=True)
-
         new_node_payload = message_builder.build_mqtt_payload(
             source="hub_master_01",
             target="backend_api",

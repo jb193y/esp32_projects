@@ -70,11 +70,11 @@ def irq_handler(event, data):
         conn_handle, addr_type, addr = data
         is_ble_connected = False
         print(" BLE Central disconnected.")
-        try:
-            led_status.set_status("BLE_PROVISIONING")
-        except:
-            pass
         if not _shutdown_requested:
+            try:
+                led_status.set_status("BLE_PROVISIONING")
+            except:
+                pass
             try:
                 start_advertising()
             except Exception:
