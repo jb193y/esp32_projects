@@ -61,47 +61,7 @@ _lock = ReentrantLock()
 _is_connected = False
 _enabled = True
 _provision_confirmed = False
-_timer_started = False
-
-def _provision_confirmation_timer_bg():
-    global _provision_confirmed
-    print(" Provision confirmation countdown started (90s window)...")
-    try:
-        led_status.set_status("START_DISCOVERY")
-    except Exception:
-        pass
-
-    start_t = time.time()
-    while time.time() - start_t < 90:
-        if _provision_confirmed:
-            print(" Provision confirmation timer canceled (confirmed successfully!).")
-            return
-        time.sleep(1)
-
-    if not _provision_confirmed:
-        print(" Provision confirmation TIMEOUT (90s elapsed without API claim confirmation)!")
-        print(" Auto-resetting device back to BLE Provisioning mode...")
-        try:
-            cfg = config.load_config()
-            cfg.setdefault("client", {})["mode"] = "ble_setup"
-            with open("config.json", "w") as f:
-                ujson.dump(cfg, f)
-        except Exception as ex:
-            print(" Config reset notice:", ex)
-
-        try:
-            import sys
-            sys.stdout.write("\r\n--- REBOOTING ESP32 TO BLE SETUP ---\r\n")
-            sys.stdout.flush()
-        except Exception:
-            pass
-        time.sleep_ms(300)
-
-        try:
-            import machine
-            machine.soft_reset()
-        except Exception:
-            pass
+_provision_start_time = 0
 
 # Callback from espnow_master to dispatch commands
 _cmd_dispatcher = None
@@ -348,8 +308,9 @@ def on_message(topic, msg):
                     print("Error handling resource surplus command:", ex)
                 return
             elif command in ("CONFIRM_PROVISION", "confirm_provision"):
-                global _provision_confirmed
+                global _provision_confirmed, _provision_start_time
                 _provision_confirmed = True
+                _provision_start_time = 0
                 print(" Provisioning confirmed via MQTT! System fully operational.")
                 config.update_config({"client": {"mode": "normal"}})
                 cfg.setdefault("client", {})["mode"] = "normal"
@@ -556,11 +517,14 @@ def mqtt_thread(heartbeats=None):
                     print("ERROR: 'site' not set in config. Cannot publish hub status.")
                 
                 # Check if device is pending provision confirmation
-                global _timer_started
-                if is_pending_claim and not _timer_started:
-                    _timer_started = True
-                    print(" Waiting for MQTT command 'CONFIRM_PROVISION' from backend API...")
-                    _thread.start_new_thread(_provision_confirmation_timer_bg, ())
+                global _provision_start_time
+                if is_pending_claim and _provision_start_time == 0:
+                    _provision_start_time = time.time()
+                    print(" Waiting for MQTT command 'CONFIRM_PROVISION' from backend API (90s window)...")
+                    try:
+                        led_status.set_status("START_DISCOVERY")
+                    except Exception:
+                        pass
                 
             except Exception as e:
                 print("MQTT connection failed:", e)
@@ -596,6 +560,31 @@ def mqtt_thread(heartbeats=None):
             except Exception as ping_err:
                 print("MQTT ping error (connection dropped):", ping_err)
                 _is_connected = False
+
+        # Check provision confirmation timeout inline (zero extra threads)
+        if not _provision_confirmed and _provision_start_time > 0 and (now - _provision_start_time > 90):
+            _provision_start_time = 0
+            print(" Provision confirmation TIMEOUT (90s elapsed without API claim confirmation)!")
+            print(" Auto-resetting device back to BLE Provisioning mode...")
+            try:
+                cfg = config.load_config()
+                cfg.setdefault("client", {})["mode"] = "ble_setup"
+                with open("config.json", "w") as f:
+                    ujson.dump(cfg, f)
+            except Exception:
+                pass
+            try:
+                import sys
+                sys.stdout.write("\r\n--- REBOOTING ESP32 TO BLE SETUP ---\r\n")
+                sys.stdout.flush()
+            except Exception:
+                pass
+            time.sleep_ms(300)
+            try:
+                import machine
+                machine.soft_reset()
+            except Exception:
+                pass
 
         # Periodically publish hub status telemetry ONLY when claim is completed (mode: normal)
         client_mode = cfg.get("client", {}).get("mode", "normal")
