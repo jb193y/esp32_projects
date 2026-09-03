@@ -71,11 +71,11 @@ def _check_buttons(t):
         except Exception:
             pass
 
-def start():
+def start(custom_pins=None):
     global _timer, _held_time, _button_pins, _reset_scheduled
     _reset_scheduled = False
     print(" Factory Reset monitor initializing (Timer mode)...")
-    candidate_pins = [0, 47, 14]
+    candidate_pins = custom_pins if custom_pins is not None else [0, 47]
     _button_pins = []
     for pin_num in candidate_pins:
         try:
