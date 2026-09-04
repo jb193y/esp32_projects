@@ -461,7 +461,6 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
     # Hub must be confirmed provisioned before discovering, pairing, or provisioning child nodes
     if msg_type in ("DISCOVERY_REQ", "PAIR_REQ", "PROVISIONING", "PROV") or (msg_type == "STATUS" and isinstance(data, dict) and data.get("status") in ("pairing_request", "BLE_CLAIM_PENDING")):
         try:
-            import mqtt_client
             if not mqtt_client.is_provision_confirmed():
                 print(f" [Hub Notice] Ignoring {msg_type} from {sender_mac_str} - Hub itself is not confirmed provisioned yet.")
                 return
@@ -976,7 +975,6 @@ def espnow_receiver_thread(heartbeats=None):
 
         now = config.get_unix_time()
         try:
-            import mqtt_client
             hub_ready = mqtt_client.is_provision_confirmed()
         except Exception:
             hub_ready = False
@@ -1065,5 +1063,10 @@ def espnow_receiver_thread(heartbeats=None):
                 except:
                     pass
             else:
+                import sys
                 print(f"Error in espnow_receiver_thread loop: {e}")
+                try:
+                    sys.print_exception(e)
+                except Exception:
+                    pass
             time.sleep_ms(100)
