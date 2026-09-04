@@ -30,6 +30,7 @@ import _thread
 import config
 import led_status
 import network_manager
+import message_builder
 
 class ReentrantLock:
     def __init__(self):

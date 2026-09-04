@@ -132,7 +132,7 @@ def pulse_solenoid(valve_id="1", open_pulse=True):
     save_valve_states()
     print(f" Solenoid Valve {valve_id} Action complete. State: {valve['state']}")
 
-def on_hub_command_received(cmd_or_packet, args_or_sender=None):
+def handle_hub_commands(cmd_or_packet, args_or_sender=None):
     if isinstance(cmd_or_packet, dict):
         msg_type = cmd_or_packet.get("type") or cmd_or_packet.get("msg_type") or cmd_or_packet.get("t")
         data = cmd_or_packet.get("action") or cmd_or_packet.get("config") or cmd_or_packet.get("data") or cmd_or_packet.get("pld") or {}
