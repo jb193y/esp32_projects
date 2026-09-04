@@ -106,25 +106,19 @@ def publish_hub_telemetry(status_val):
         
         tele_topic = f"{site}/{group}/{client_type}/{client_id}/telemetry"
 
-        payload = {
-            "source": client_id,
-            "target": "backend_api",
-            "msg_type": "TELEMETRY",
-            "timestamp": config.get_unix_time(),
-            "route": {
-                "transport": "MQTT",
-                "route_id": "direct",
-                "current_hop_index": 0,
-                "hops": [client_id],
-                "link_diagnostics": []
-            },
-            "data": {
+        payload = message_builder.build_mqtt_payload(
+            source=client_id,
+            target="backend_api",
+            msg_type="TELEMETRY",
+            data={
                 "device_id": client_id,
                 "hub_status": status_val,
                 "device_status": status_val,
                 "mode": "AUTO"
-            }
-        }
+            },
+            route_transport="MQTT",
+            hops=[client_id]
+        )
         publish_msg(tele_topic, payload)
         global _last_telemetry_time
         _last_telemetry_time = time.time()
@@ -146,22 +140,16 @@ def publish_hub_schedules():
         
         topic = f"{site}/{group}/{client_type}/{client_id}/schedules"
         
-        payload = {
-            "source": client_id,
-            "target": "backend_api",
-            "msg_type": "SCHEDULES",
-            "timestamp": config.get_unix_time(),
-            "route": {
-                "transport": "MQTT",
-                "route_id": "direct",
-                "current_hop_index": 0,
-                "hops": [client_id],
-                "link_diagnostics": []
-            },
-            "data": {
+        payload = message_builder.build_mqtt_payload(
+            source=client_id,
+            target="backend_api",
+            msg_type="SCHEDULES",
+            data={
                 "schedules": schedules_list
-            }
-        }
+            },
+            route_transport="MQTT",
+            hops=[client_id]
+        )
         publish_msg(topic, payload)
         print(f"Published Hub schedules to {topic}")
     except Exception as e:
@@ -177,32 +165,36 @@ def on_message(topic, msg):
         payload = ujson.loads(payload_str)
         
         # Check if it is the standardized JSON envelope
-        if "source" in payload and "target" in payload and "msg_type" in payload and "data" in payload:
-            target_device = payload.get("target")
+        msg_type = payload.get("type") or payload.get("msg_type")
+        target_device = payload.get("target")
+        msg_id = str(payload.get("id") or config.get_unix_time())
+        ts = payload.get("ts") or payload.get("timestamp") or config.get_unix_time()
+        
+        if "source" in payload and target_device and msg_type:
             # Ignore upstream messages targeted to backend_api (reflected from wildcard subscriptions)
             if target_device == "backend_api":
                 return
             print(f"MQTT Received: Topic={topic_str}, Payload={payload_str}")
-            msg_type = payload.get("msg_type")
-            data = payload.get("data", {})
             
-            if topic_str.endswith("/config"):
+            data = payload.get("action") or payload.get("config") or payload.get("state") or payload.get("ack") or payload.get("data") or {}
+            
+            if topic_str.endswith("/config") or msg_type == "CONFIG":
                 cfg = config.load_config()
                 client_id = cfg.get("client", {}).get("id", "hub_master_02")
                 if target_device == client_id:
                     try:
-                        settings = data.get("settings", {})
+                        settings = data.get("settings", data)
                         
                         # Extract and parse Well Recharge Delay
-                        well_recharge = settings.get("Well & Water Management", {}).get("Well Recharge Delay", "2 Hours")
+                        well_recharge = settings.get("Well & Water Management", {}).get("Well Recharge Delay", "2 Hours") if isinstance(settings, dict) else "2 Hours"
                         well_recharge_sec = 1800
-                        if "1" in well_recharge: well_recharge_sec = 3600
-                        elif "2" in well_recharge: well_recharge_sec = 7200
-                        elif "4" in well_recharge: well_recharge_sec = 14400
-                        elif "6" in well_recharge: well_recharge_sec = 21600
-                        elif "8" in well_recharge: well_recharge_sec = 28800
+                        if "1" in str(well_recharge): well_recharge_sec = 3600
+                        elif "2" in str(well_recharge): well_recharge_sec = 7200
+                        elif "4" in str(well_recharge): well_recharge_sec = 14400
+                        elif "6" in str(well_recharge): well_recharge_sec = 21600
+                        elif "8" in str(well_recharge): well_recharge_sec = 28800
                         
-                        wifi_ssid = settings.get("Network Configuration", {}).get("WiFi SSID")
+                        wifi_ssid = settings.get("Network Configuration", {}).get("WiFi SSID") if isinstance(settings, dict) else None
                         
                         update_payload = {}
                         if wifi_ssid:
@@ -222,6 +214,18 @@ def on_message(topic, msg):
                 return
             
             command = data.get("cmd") or data.get("command") or data.get("state") or data.get("step")
+            if not command and isinstance(data, dict):
+                if "set_valves" in data:
+                    command = "SET_VALVES"
+                elif "set_pump" in data:
+                    command = f"PUMP_{data['set_pump']}"
+                elif "pump" in data:
+                    command = "PUMP_ON" if data["pump"] == "ON" else "PUMP_OFF"
+                elif "valve" in data:
+                    command = "VALVE_OPEN" if data["valve"] in ("OPEN", "ON") else "VALVE_CLOSE"
+                elif "hub_status" in data:
+                    command = "HUB_ENABLE" if data["hub_status"] == "Enabled" else "HUB_DISABLE"
+                    
             if topic_str.endswith("/provisioning") and not command:
                 if data.get("step") == "CONFIRM_PROVISION" or data.get("status") == "provision_confirmed":
                     command = "CONFIRM_PROVISION"
@@ -237,7 +241,6 @@ def on_message(topic, msg):
                 if "state" in data:
                     state_data = data["state"]
                     if isinstance(state_data, dict):
-                        # Merge state keys to top level of args to keep ESP-NOW payloads flat and compact
                         for k, v in state_data.items():
                             if k not in args:
                                 args[k] = v
@@ -266,12 +269,13 @@ def on_message(topic, msg):
         cfg = config.load_config()
         client_id = cfg.get("client", {}).get("id", "hub_master_01")
 
-        # Instant MQTT Acknowledgment back to sender inside standard envelope
+        # Instant MQTT Acknowledgment back to sender inside unified standard envelope
         resp_payload = {
+            "id": msg_id,
             "source": client_id,
             "target": payload.get("source", "backend_api"),
-            "msg_type": "ACK",
-            "timestamp": config.get_unix_time(),
+            "type": "ACK",
+            "ts": config.get_unix_time(),
             "route": {
                 "transport": "MQTT",
                 "route_id": "hub_ack",
@@ -279,9 +283,9 @@ def on_message(topic, msg):
                 "hops": [payload.get("source", "backend_api")],
                 "link_diagnostics": []
             },
-            "data": {
+            "ack": {
                 "status": "RECEIVED_BY_HUB",
-                "target_device_id": target_device,
+                "target": target_device,
                 "command": command
             }
         }
@@ -351,24 +355,18 @@ def on_message(topic, msg):
                     pass
                 
                 # Publish official online status and initial telemetry
-                publish_msg(c_status_topic, {
-                    "source": c_id,
-                    "target": "backend_api",
-                    "msg_type": "STATUS",
-                    "timestamp": config.get_unix_time(),
-                    "route": {
-                        "transport": "MQTT",
-                        "route_id": "direct",
-                        "current_hop_index": 0,
-                        "hops": [c_id],
-                        "link_diagnostics": []
-                    },
-                    "data": {
+                publish_msg(c_status_topic, message_builder.build_mqtt_payload(
+                    source=c_id,
+                    target="backend_api",
+                    msg_type="STATUS",
+                    data={
                         "device_id": c_id,
                         "status": "online",
                         "fw_ver": c_client.get("firmware_version", "hub_v1.0.0")
-                    }
-                }, retain=True)
+                    },
+                    route_transport="MQTT",
+                    hops=[c_id]
+                ), retain=True)
                 publish_hub_telemetry("Enabled")
             elif command in ("HUB_ENABLE", "HUB_DISABLE"):
                 status_val = "Enabled" if command == "HUB_ENABLE" else "Disabled"
@@ -490,24 +488,19 @@ def mqtt_thread(heartbeats=None):
                 # Configure Last Will and Testament (LWT) only for commissioned devices in normal mode
                 client_mode = client_info.get("mode", "normal")
                 if client_mode == "normal":
-                    lwt_payload = ujson.dumps({
-                        "source": client_id,
-                        "target": "backend_api",
-                        "msg_type": "STATUS",
-                        "timestamp": config.get_unix_time(),
-                        "route": {
-                            "transport": "MQTT",
-                            "route_id": "lwt",
-                            "current_hop_index": 0,
-                            "hops": [client_id],
-                            "link_diagnostics": []
-                        },
-                        "data": {
+                    lwt_payload = ujson.dumps(message_builder.build_mqtt_payload(
+                        source=client_id,
+                        target="backend_api",
+                        msg_type="STATUS",
+                        data={
                             "device_id": client_id,
                             "status": "offline",
                             "reason": "keepalive_timeout"
-                        }
-                    })
+                        },
+                        route_transport="MQTT",
+                        route_id="lwt",
+                        hops=[client_id]
+                    ))
                     try:
                         _client.set_last_will(status_topic.encode('utf-8'), lwt_payload.encode('utf-8'), retain=False)
                     except Exception as lwt_err:
@@ -531,50 +524,38 @@ def mqtt_thread(heartbeats=None):
                 client_mode = cfg.get("client", {}).get("mode", "normal")
                 is_pending_claim = (client_mode != "normal" and not _provision_confirmed)
                 
-                # Publish startup status in standard envelope
+                # Publish startup status in unified standard envelope
                 if site != "default_site":
                     if is_pending_claim:
                         # Dedicated provisioning topic (never retained)
-                        publish_msg(prov_hub_topic, {
-                            "source": client_id,
-                            "target": "backend_api",
-                            "msg_type": "PROVISIONING",
-                            "timestamp": config.get_unix_time(),
-                            "route": {
-                                "transport": "MQTT",
-                                "route_id": "direct",
-                                "current_hop_index": 0,
-                                "hops": [client_id],
-                                "link_diagnostics": []
-                            },
-                            "data": {
+                        publish_msg(prov_hub_topic, message_builder.build_mqtt_payload(
+                            source=client_id,
+                            target="backend_api",
+                            msg_type="PROVISIONING",
+                            data={
                                 "device_id": client_id,
                                 "status": "BLE_CLAIM_PENDING",
                                 "node_type": "HUB",
                                 "step": "CLAIM_PENDING",
                                 "fw_ver": cfg.get("client", {}).get("firmware_version", "hub_v1.0.0")
-                            }
-                        }, retain=False)
+                            },
+                            route_transport="MQTT",
+                            hops=[client_id]
+                        ), retain=False)
                         print(f" Published startup status: BLE_CLAIM_PENDING to {prov_hub_topic}")
                     else:
-                        publish_msg(status_topic, {
-                            "source": client_id,
-                            "target": "backend_api",
-                            "msg_type": "STATUS",
-                            "timestamp": config.get_unix_time(),
-                            "route": {
-                                "transport": "MQTT",
-                                "route_id": "direct",
-                                "current_hop_index": 0,
-                                "hops": [client_id],
-                                "link_diagnostics": []
-                            },
-                            "data": {
+                        publish_msg(status_topic, message_builder.build_mqtt_payload(
+                            source=client_id,
+                            target="backend_api",
+                            msg_type="STATUS",
+                            data={
                                 "device_id": client_id,
                                 "status": "online",
                                 "fw_ver": cfg.get("client", {}).get("firmware_version", "hub_v1.0.0")
-                            }
-                        }, retain=True)
+                            },
+                            route_transport="MQTT",
+                            hops=[client_id]
+                        ), retain=True)
                         print(f" Published startup status: online to {status_topic}")
                 else:
                     print("ERROR: 'site' not set in config. Cannot publish hub status.")

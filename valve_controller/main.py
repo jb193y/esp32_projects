@@ -132,16 +132,17 @@ def pulse_solenoid(valve_id="1", open_pulse=True):
     save_valve_states()
     print(f" Solenoid Valve {valve_id} Action complete. State: {valve['state']}")
 
-def handle_hub_commands(cmd_or_packet, args_or_sender=None):
-    """
-    Called from espnow_client listener thread when a message arrives from the Hub.
-    Handles both packet dictionaries and (cmd, args) callbacks.
-    """
+def on_hub_command_received(cmd_or_packet, args_or_sender=None):
     if isinstance(cmd_or_packet, dict):
-        msg_type = cmd_or_packet.get("msg_type")
-        data = cmd_or_packet.get("data", {})
+        msg_type = cmd_or_packet.get("type") or cmd_or_packet.get("msg_type") or cmd_or_packet.get("t")
+        data = cmd_or_packet.get("action") or cmd_or_packet.get("config") or cmd_or_packet.get("data") or cmd_or_packet.get("pld") or {}
         cmd = data.get("cmd") or data.get("command")
-        sender_mac = args_or_sender or cmd_or_packet.get("source")
+        if not cmd and isinstance(data, dict):
+            if "set_valves" in data:
+                cmd = "SET_VALVES"
+            elif "valve_id" in data and ("command" in data or "state" in data):
+                cmd = data.get("command") or ("VALVE_OPEN" if data.get("state") == "OPEN" else "VALVE_CLOSE")
+        sender_mac = args_or_sender or cmd_or_packet.get("source") or cmd_or_packet.get("src")
     else:
         cmd = cmd_or_packet
         data = args_or_sender if isinstance(args_or_sender, dict) else {}
@@ -159,7 +160,7 @@ def handle_hub_commands(cmd_or_packet, args_or_sender=None):
     if msg_type in ("CMD", "COMMAND"):
         _cmd_queue.append((cmd, data, sender_mac))
     elif msg_type == "ACK":
-        status_val = data.get("status")
+        status_val = data.get("status") if isinstance(data, dict) else None
         if status_val == "sleep_ok":
             print(" Hub returned SLEEP_OK.")
         else:
@@ -172,8 +173,8 @@ def execute_command(cmd, args, sender_mac=None):
     print(f" Executing Hub command: {cmd} with args: {args}")
     
     if cmd == "SET_VALVES":
-        # Target states can be passed as {"valves": {...}} or directly as {...}
-        target_states = args.get("valves") if (isinstance(args, dict) and "valves" in args) else args
+        # Target states can be passed as {"set_valves": {...}} or {"valves": {...}} or directly as {...}
+        target_states = (args.get("set_valves") or args.get("valves")) if isinstance(args, dict) else args
         
         if isinstance(target_states, dict):
             # Check for global ALL or '0' shortcut (e.g. {"ALL": "CLOSED"} or {"0": "OPEN"})
@@ -185,8 +186,20 @@ def execute_command(cmd, args, sender_mac=None):
             else:
                 for vid, target_state in target_states.items():
                     if str(vid) in valves:
-                        pulse_solenoid(str(vid), open_pulse=(str(target_state).upper() == "OPEN"))
+                        pulse_solenoid(str(vid), open_pulse=(str(target_state).upper() in ("OPEN", "ON", "1", "TRUE")))
         
+        any_open = any(v.get("state") == "OPEN" for v in valves.values())
+        espnow_client.send_ack_or_tele_to_hub("ACK", {
+            "status": "VALVES_UPDATED",
+            "valves": {vid: v["state"] for vid, v in valves.items()},
+            "node_status": "watering" if any_open else "valve_idle"
+        }, target_mac=sender_mac)
+
+    elif cmd in ("VALVE_OPEN", "VALVE_CLOSE"):
+        valve_id = str(args.get("valve_id", 1)) if isinstance(args, dict) else "1"
+        open_pulse = (cmd == "VALVE_OPEN")
+        if valve_id in valves:
+            pulse_solenoid(valve_id, open_pulse=open_pulse)
         any_open = any(v.get("state") == "OPEN" for v in valves.values())
         espnow_client.send_ack_or_tele_to_hub("ACK", {
             "status": "VALVES_UPDATED",
