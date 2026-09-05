@@ -180,10 +180,10 @@ def send_espnow_msg(target_mac_str, msg_dict, routing_path=None, target_id=None)
     if not routing_path:
         routing_path = [target_mac_str]
 
-    msg_type = msg_dict.get("msg_type", "COMMAND")
+    msg_type = msg_dict.get("type") or msg_dict.get("msg_type", "COMMAND")
     if msg_type == "CMD":
         msg_type = "COMMAND"
-    data_payload = msg_dict.get("payload", {})
+    data_payload = msg_dict.get("action") or msg_dict.get("config") or msg_dict.get("payload") or msg_dict.get("data", {})
 
     envelope = message_builder.build_espnow_envelope(
         hub_id,
@@ -317,27 +317,22 @@ def dispatch_command_from_mqtt(target_node, command, routing_path, args):
     node_type = node_info.get("node_type", "node").lower()
     node_id_slug = node_info.get("node_id", target_mac_str.replace(':', '')).lower()
 
-    # Publish FORWARDING_TO_NODE response to MQTT in standard envelope
-    fwd_payload = {
-        "source": client_id,
-        "target": "backend_api",
-        "msg_type": "ACK",
-        "timestamp": config.get_unix_time(),
-        "route": {
-            "transport": "MQTT",
-            "route_id": "fwd_cmd_ack",
-            "current_hop_index": 0,
-            "hops": ["backend_api"],
-            "link_diagnostics": []
-        },
-        "data": {
+    # Publish FORWARDING_TO_NODE response to MQTT in unified standard envelope
+    fwd_payload = message_builder.build_mqtt_payload(
+        source=client_id,
+        target="backend_api",
+        msg_type="ACK",
+        data={
             "status": "FORWARDING_TO_NODE",
-            "target_node": target_node,
+            "target": target_node,
             "node_mac": target_mac_str,
             "command": command,
             "hub_id": client_id
-        }
-    }
+        },
+        route_transport="MQTT",
+        route_id="fwd_cmd_ack",
+        hops=["backend_api"]
+    )
     site = cfg.get("client", {}).get("site", "default_site")
     group = cfg.get("client", {}).get("group", "all")
     if site != "default_site":
@@ -407,8 +402,8 @@ def dispatch_command_from_mqtt(target_node, command, routing_path, args):
         payload = {"cmd": command}
         payload.update(args)
         cmd_msg = {
-            "msg_type": "COMMAND",
-            "payload": payload
+            "type": "COMMAND",
+            "action": payload
         }
         # 1. Enqueue in mailbox for sleep/polling nodes
         enqueue_mailbox_command(target_mac_str, cmd_msg, mac_routing_path, target_id=target_node)

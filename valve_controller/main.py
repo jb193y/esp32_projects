@@ -474,15 +474,19 @@ def main():
         espnow_client.send_ack_or_tele_to_hub("TELE", telemetry)
         print(" Check-In Telemetry sent to Hub. Listening for commands...")
 
-        # 2. Wait up to 1500ms for incoming Hub response / mailbox commands
+        # 2. Wait up to 3500ms for incoming Hub response / mailbox commands
         start_wait = time.ticks_ms()
-        while time.ticks_diff(time.ticks_ms(), start_wait) < 1500:
+        cmd_executed = False
+        while time.ticks_diff(time.ticks_ms(), start_wait) < 3500:
             if _cmd_queue:
                 cmd, args, sender_mac = _cmd_queue.pop(0)
                 execute_command(cmd, args, sender_mac)
-                time.sleep_ms(150)
+                cmd_executed = True
+                start_wait = time.ticks_ms()
+            time.sleep_ms(30)
+            if cmd_executed and not _cmd_queue:
+                time.sleep_ms(350)
                 break
-            time.sleep_ms(20)
 
         # 3. If an OTA update session is in progress, stay awake until complete!
         while ota_receiver.is_in_progress():
@@ -491,9 +495,14 @@ def main():
                 execute_command(cmd, args, sender_mac)
             time.sleep_ms(50)
 
-        # 4. Enter Deep Sleep
+        # 4. Wait for TX queue to finish transmitting any pending ACK frames
+        tx_wait = time.ticks_ms()
+        while not espnow_client.tx_queue.empty() and time.ticks_diff(time.ticks_ms(), tx_wait) < 1000:
+            time.sleep_ms(20)
+
+        # 5. Enter Deep Sleep
         print(f" Going to Deep Sleep for {deep_sleep_sec}s. Goodnight!")
-        time.sleep_ms(50)
+        time.sleep_ms(100)
         try:
             espnow_client.stop_client()
         except:

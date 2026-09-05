@@ -404,6 +404,17 @@ def send_pairing_request():
         send_ack_or_tele_to_hub("STATUS", payload, target_mac="ff:ff:ff:ff:ff:ff")
 
 
+def is_paired():
+    global _paired
+    if _paired:
+        return True
+    cfg = config.load_config()
+    hub_mac = cfg.get("hub", {}).get("mac", "") or cfg.get("parent", {}).get("mac", "")
+    if is_valid_mac(hub_mac) and hub_mac not in ("00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff"):
+        _paired = True
+        return True
+    return False
+
 def init_espnow_client(on_cmd_received_fn=None):
     global _e, _stop_requested
     if not has_espnow:
@@ -434,7 +445,13 @@ def init_espnow_client(on_cmd_received_fn=None):
     
     espnow_relay.init_relay_engine(_e, lambda next_hop_bytes, payload_bytes, phys_mac, target_id: tx_queue.put((next_hop_bytes, payload_bytes, phys_mac, target_id)))
     
-    send_pairing_request()
+    # Only request pairing if no valid parent/Hub MAC is stored in configuration
+    if not is_paired():
+        send_pairing_request()
+    else:
+        hub_mac = cfg.get("hub", {}).get("mac", "") or cfg.get("parent", {}).get("mac", "")
+        print(f" Node paired with Hub/Parent {hub_mac} on Channel {ch}")
+        
     return _e
 
 def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
