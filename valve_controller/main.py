@@ -460,9 +460,22 @@ def main():
     deep_sleep_sec = int(client_cfg.get("deep_sleep_sec", 30))
 
     if deep_sleep_enabled:
-        print(f" [Power Mode] Deep Sleep Configured (Sleep interval: {deep_sleep_sec}s)")
+        print(f" [Power Mode] Deep Sleep Configured (Base interval: {deep_sleep_sec}s)")
 
-        # 1. Send Check-In / Telemetry to Hub
+        # Determine Mesh Tier (Tier 1 = Direct/Relay, Tier 2 = Leaf multi-hop)
+        hub_mac = cfg.get("hub", {}).get("mac", "")
+        parent_mac = cfg.get("parent", {}).get("mac", "")
+        is_leaf = bool(parent_mac and parent_mac != hub_mac and parent_mac != "00:00:00:00:00:00")
+        mesh_tier = 2 if is_leaf else 1
+
+        # 1. Micro-Jitter / Pseudo-TDMA slot delay (eliminates collisions)
+        sta = network.WLAN(network.STA_IF)
+        local_mac = espnow_client.bytes_to_mac(sta.config('mac'))
+        slot_delay_ms = espnow_client.calculate_slot_jitter_ms(local_mac, tier=mesh_tier)
+        print(f" [Micro-Jitter] Tier {mesh_tier} slot delay: {slot_delay_ms}ms")
+        time.sleep_ms(slot_delay_ms)
+
+        # 2. Send Check-In / Telemetry to Hub
         any_open = any(v.get("state") == "OPEN" for v in valves.values())
         node_status = "watering" if any_open else "valve_idle"
         telemetry = {
@@ -474,7 +487,7 @@ def main():
         espnow_client.send_ack_or_tele_to_hub("TELE", telemetry)
         print(" Check-In Telemetry sent to Hub. Listening for commands...")
 
-        # 2. Wait up to 3500ms for incoming Hub response / mailbox commands
+        # 3. Wait up to 3500ms for incoming Hub response / mailbox commands
         start_wait = time.ticks_ms()
         cmd_executed = False
         while time.ticks_diff(time.ticks_ms(), start_wait) < 3500:
@@ -488,26 +501,27 @@ def main():
                 time.sleep_ms(350)
                 break
 
-        # 3. If an OTA update session is in progress, stay awake until complete!
+        # 4. If an OTA update session is in progress, stay awake until complete!
         while ota_receiver.is_in_progress():
             if _cmd_queue:
                 cmd, args, sender_mac = _cmd_queue.pop(0)
                 execute_command(cmd, args, sender_mac)
             time.sleep_ms(50)
 
-        # 4. Wait for TX queue to finish transmitting any pending ACK frames
+        # 5. Wait for TX queue to finish transmitting any pending ACK frames
         tx_wait = time.ticks_ms()
         while not espnow_client.tx_queue.empty() and time.ticks_diff(time.ticks_ms(), tx_wait) < 1000:
             time.sleep_ms(20)
 
-        # 5. Enter Deep Sleep
-        print(f" Going to Deep Sleep for {deep_sleep_sec}s. Goodnight!")
-        time.sleep_ms(100)
+        # 6. Enter Closed-Loop Synced Deep Sleep
+        sleep_duration_ms = espnow_client.get_next_wake_delay_ms(default_sec=deep_sleep_sec)
+        print(f" Going to Deep Sleep for {sleep_duration_ms}ms ({sleep_duration_ms/1000:.1f}s). Goodnight!")
+        time.sleep_ms(50)
         try:
             espnow_client.stop_client()
         except:
             pass
-        machine.deepsleep(deep_sleep_sec * 1000)
+        machine.deepsleep(sleep_duration_ms)
 
     else:
         # Continuous Running Loop (Non-sleep mode)

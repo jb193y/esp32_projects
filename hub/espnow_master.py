@@ -28,6 +28,27 @@ rx_queue = config.Queue()
 _node_mailbox = {}
 MAILBOX_TTL_SEC = 600
 
+def clear_mailbox_command(target_mac_str, cmd_name=None):
+    global _node_mailbox
+    mac_key = target_mac_str.lower()
+    if mac_key not in _node_mailbox:
+        return
+    if cmd_name is None:
+        _node_mailbox.pop(mac_key, None)
+        print(f" [Mailbox] Cleared all pending commands for {target_mac_str}")
+    else:
+        filtered = []
+        for item in _node_mailbox[mac_key]:
+            act = item["msg_dict"].get("action") or item["msg_dict"].get("config") or item["msg_dict"].get("payload") or item["msg_dict"].get("data") or {}
+            c = act.get("cmd") or act.get("command") or item["msg_dict"].get("type")
+            if c != cmd_name:
+                filtered.append(item)
+        if filtered:
+            _node_mailbox[mac_key] = filtered
+        else:
+            _node_mailbox.pop(mac_key, None)
+        print(f" [Mailbox] Cleared '{cmd_name}' for {target_mac_str}")
+
 def enqueue_mailbox_command(target_mac_str, msg_dict, routing_path=None, target_id=None, ttl_sec=MAILBOX_TTL_SEC):
     global _node_mailbox
     now = time.time()
@@ -38,6 +59,16 @@ def enqueue_mailbox_command(target_mac_str, msg_dict, routing_path=None, target_
     # Remove expired commands
     _node_mailbox[mac_key] = [item for item in _node_mailbox[mac_key] if item["expires_at"] > now]
     
+    # Deduplicate: replace older instance of the same command
+    act = msg_dict.get("action") or msg_dict.get("config") or msg_dict.get("payload") or msg_dict.get("data") or {}
+    new_cmd = act.get("cmd") or act.get("command") or msg_dict.get("type")
+    if new_cmd:
+        _node_mailbox[mac_key] = [
+            item for item in _node_mailbox[mac_key]
+            if (item["msg_dict"].get("action") or item["msg_dict"].get("config") or item["msg_dict"].get("payload") or item["msg_dict"].get("data") or {}).get("cmd") != new_cmd
+            and (item["msg_dict"].get("action") or item["msg_dict"].get("config") or item["msg_dict"].get("payload") or item["msg_dict"].get("data") or {}).get("command") != new_cmd
+        ]
+
     _node_mailbox[mac_key].append({
         "msg_dict": msg_dict,
         "routing_path": routing_path,
@@ -630,6 +661,14 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
             return_hops.append(hop)
         return_hops.append(original_sender_mac)
 
+        # Closed-Loop Sleep Window Calculation:
+        # Default global cycle = 30000ms (25s sleep, 5s awake).
+        # Calculate milliseconds remaining until next cycle boundary:
+        cycle_period_ms = 30000
+        now_ms = config.get_unix_time_ms()
+        target_ms = ((now_ms // cycle_period_ms) + 1) * cycle_period_ms
+        next_wake_delay_ms = max(5000, min(target_ms - now_ms, cycle_period_ms))
+
         # Check if this node has a pending command in the mailbox to deliver
         pending_cmd = pop_mailbox_command(original_sender_mac) or pop_mailbox_command(sender_mac_str)
         try:
@@ -642,14 +681,16 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
                     target_id=device_id
                 )
             else:
-                # Send ESP-NOW ACK with SLEEP_OK so deep-sleeping nodes can immediately sleep
+                # Send ESP-NOW ACK with SLEEP_OK and closed-loop sleep delay
                 send_espnow_msg(
                     target_mac_str=return_hops[0],
                     msg_dict={
                         "msg_type": "ACK",
                         "payload": {
                             "status": "sleep_ok",
-                            "sleep_sec": 30,
+                            "hub_epoch_ms": now_ms,
+                            "next_wake_delay_ms": next_wake_delay_ms,
+                            "sleep_sec": int(next_wake_delay_ms // 1000),
                             "topic": tele_topic
                         }
                     },
@@ -660,6 +701,15 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
             print(" [Hub] Response delivery error:", ack_err)
 
     elif msg_type == "ACK":
+        # Clear mailbox command if node confirmed execution
+        if isinstance(data, dict):
+            ack_st = str(data.get("status", ""))
+            ack_cmd = str(data.get("command", "") or data.get("cmd", ""))
+            if ack_st == "provisioned" or ack_cmd == "CONFIRM_PROVISION":
+                clear_mailbox_command(sender_mac_str, "CONFIRM_PROVISION")
+            elif ack_cmd:
+                clear_mailbox_command(sender_mac_str, ack_cmd)
+
         # Forward to ota_sender if this is an OTA protocol packet
         if isinstance(data, dict) and ("ota_proto" in data or str(data.get("status", "")).startswith("OTA_") or str(data.get("status", "")).startswith("CHUNK_") or str(data.get("status", "")).startswith("VERIFY_")):
             ota_sender.notify_ack(data)
@@ -694,6 +744,28 @@ def process_espnow_frame(sender_mac_str, payload_bytes):
             timestamp=packet.get("raw", {}).get("timestamp", int(config.get_unix_time()))
         )
         mqtt_client.publish_msg(f"{site}/{group}/{node_type}/{device_id}/acks", mqtt_payload)
+
+        # Send closed-loop SLEEP_OK to executing node so it can immediately enter deep sleep
+        if isinstance(data, dict) and not ("ota_proto" in data or str(data.get("status", "")).startswith("OTA_")):
+            cycle_period_ms = 30000
+            now_ms = config.get_unix_time_ms()
+            target_ms = ((now_ms // cycle_period_ms) + 1) * cycle_period_ms
+            next_wake_delay_ms = max(5000, min(target_ms - now_ms, cycle_period_ms))
+            
+            send_espnow_msg(
+                target_mac_str=sender_mac_str,
+                msg_dict={
+                    "msg_type": "ACK",
+                    "payload": {
+                        "status": "sleep_ok",
+                        "hub_epoch_ms": now_ms,
+                        "next_wake_delay_ms": next_wake_delay_ms,
+                        "sleep_sec": int(next_wake_delay_ms // 1000)
+                    }
+                },
+                routing_path=packet.get("hops", [sender_mac_str]),
+                target_id=device_id
+            )
 
     elif msg_type in ("ALERT", "ALERTS"):
         site = cfg.get("client", {}).get("site", "default_site")

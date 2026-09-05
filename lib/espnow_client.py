@@ -32,9 +32,49 @@ _paired = False
 _last_hub_rx_time = time.time()
 _last_pairing_tx_time = 0
 _stop_requested = False
+_next_wake_delay_ms = 0
 MAX_RX_BUFFER = 2048
 
 tx_queue = config.Queue()
+
+def calculate_slot_jitter_ms(local_mac=None, tier=1):
+    """
+    Calculates deterministic micro-jitter slot delay (ms) based on MAC and mesh tier.
+    - Tier 2 (Leaves): 0 .. 1400ms (transmit first to relays)
+    - Tier 1 (Relays/Direct): 1800 .. 3200ms (relay leaf traffic, then transmit to Hub)
+    """
+    import random
+    if not local_mac:
+        try:
+            sta = network.WLAN(network.STA_IF)
+            local_mac = bytes_to_mac(sta.config('mac'))
+        except Exception:
+            local_mac = "00:00:00:00:00:00"
+    
+    try:
+        mac_hash = sum(int(b, 16) for b in local_mac.split(':'))
+    except Exception:
+        mac_hash = random.randint(0, 100)
+
+    if tier >= 2:
+        slot_idx = mac_hash % 12
+        jitter_ms = (slot_idx * 110) + random.randint(0, 80)
+    else:
+        slot_idx = mac_hash % 12
+        jitter_ms = 1800 + (slot_idx * 110) + random.randint(0, 80)
+        
+    return jitter_ms
+
+def get_next_wake_delay_ms(default_sec=30):
+    """
+    Returns closed-loop sleep duration (ms) synced with Hub's global mesh epoch.
+    """
+    global _next_wake_delay_ms
+    if _next_wake_delay_ms > 0:
+        val = _next_wake_delay_ms
+        _next_wake_delay_ms = 0
+        return max(5000, min(val, 120000))
+    return default_sec * 1000
 
 def client_tx_loop():
     global _e, _stop_requested
@@ -651,14 +691,26 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                     if sender_mac.lower().replace(':', '') == paired_hub.lower().replace(':', ''):
                         _last_hub_rx_time = time.time()
 
-                    if is_actually_for_us and (msg_type == "COMMAND" or msg_type == "CMD") and on_cmd_received_fn is not None:
+                    if is_actually_for_us:
                         payload = packet.get("data") or packet.get("pld", {})
-                        cmd = payload.get("cmd") or payload.get("command")
+                        if isinstance(payload, dict):
+                            # Closed-loop sleep synchronization
+                            delay_ms = payload.get("next_wake_delay_ms")
+                            if delay_ms is not None:
+                                try:
+                                    _next_wake_delay_ms = int(delay_ms)
+                                    print(f" [Sleep Sync] Closed-loop sleep sync from Hub: {_next_wake_delay_ms}ms")
+                                except Exception:
+                                    pass
 
-                        payload["sender_mac"] = sender_mac
-                        payload["routing_path"] = packet.get("hops", [])
-
-                        on_cmd_received_fn(cmd, payload)
+                        if on_cmd_received_fn is not None:
+                            if msg_type in ("COMMAND", "CMD"):
+                                cmd = payload.get("cmd") or payload.get("command")
+                                payload["sender_mac"] = sender_mac
+                                payload["routing_path"] = packet.get("hops", [])
+                                on_cmd_received_fn(cmd, payload)
+                            elif msg_type == "ACK":
+                                on_cmd_received_fn(None, payload)
             else:
                 time.sleep_ms(50)
 

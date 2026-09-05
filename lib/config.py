@@ -84,6 +84,15 @@ def get_unix_time():
         return t + 946684800
     return t
 
+def get_unix_time_ms():
+    import time
+    sec = get_unix_time()
+    try:
+        ms = time.ticks_ms() % 1000
+    except Exception:
+        ms = 0
+    return int(sec * 1000 + ms)
+
 def make_frame(body):
     payload = body.encode('utf-8')
     return len(payload).to_bytes(2, 'big') + payload
