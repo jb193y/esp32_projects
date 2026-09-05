@@ -495,7 +495,7 @@ def init_espnow_client(on_cmd_received_fn=None):
     return _e
 
 def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
-    global _e, _paired, _last_hub_rx_time
+    global _e, _paired, _last_hub_rx_time, _next_wake_delay_ms
     if _e is None:
         return
 
@@ -603,7 +603,9 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                             print(f" Received BEACON from {'paired ' if _paired else ''}Hub {hub_mac} (Channel: {b_ch})")
                             _last_hub_rx_time = time.time()
                             try:
-                                upd = {"hub": {"mac": hub_mac}, "parent": {"mac": parent_mac}}
+                                current_parent = current_cfg.get("parent", {}).get("mac", "")
+                                parent_to_save = current_parent if (is_valid_mac(current_parent) and current_parent != "00:00:00:00:00:00" and current_parent != "ff:ff:ff:ff:ff:ff" and current_parent != hub_mac) else parent_mac
+                                upd = {"hub": {"mac": hub_mac}, "parent": {"mac": parent_to_save}}
                                 if b_ch:
                                     upd["wifi"] = {"channel": b_ch}
                                     set_wifi_channel(b_ch)
@@ -620,7 +622,9 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                             hub_ch = ack_pld.get("channel")
                             print(f"Client paired successfully with Hub ({hub_mac}) on Channel {hub_ch}!")
                             try:
-                                upd = {"hub": {"mac": hub_mac}, "parent": {"mac": hub_mac}}
+                                current_parent = current_cfg.get("parent", {}).get("mac", "")
+                                parent_to_save = current_parent if (is_valid_mac(current_parent) and current_parent != "00:00:00:00:00:00" and current_parent != "ff:ff:ff:ff:ff:ff" and current_parent != hub_mac) else hub_mac
+                                upd = {"hub": {"mac": hub_mac}, "parent": {"mac": parent_to_save}}
                                 if hub_ch:
                                     upd["wifi"] = {"channel": hub_ch}
                                     set_wifi_channel(hub_ch)

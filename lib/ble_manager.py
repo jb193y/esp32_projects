@@ -99,27 +99,30 @@ def update_device_config(data):
         print(f" MQTT Broker updated: {data['mqtt_broker']}")
         
     # 2. Hub MAC / ID (Pump / Valve)
-    hub_val = data.get("hub_mac") or data.get("hub_device_id")
-    if hub_val:
-        # Check if it is a formatted 6-byte MAC address (xx:xx:xx:xx:xx:xx)
-        if isinstance(hub_val, str) and hub_val.count(':') == 5 and len(hub_val) == 17:
-            cfg.setdefault("hub", {})["mac"] = hub_val
-            print(f" Hub MAC updated: {hub_val}")
-        else:
-            cfg.setdefault("hub", {})["id"] = hub_val
-            cfg.setdefault("hub", {})["mac"] = "00:00:00:00:00:00"
-            print(f" Hub ID updated (will discover MAC via ESP-NOW): {hub_val}")
+    hub_mac = data.get("hub_mac")
+    hub_id = data.get("hub_device_id") or data.get("hub_id")
+    if hub_mac and isinstance(hub_mac, str) and hub_mac.count(':') == 5 and len(hub_mac) == 17:
+        cfg.setdefault("hub", {})["mac"] = hub_mac.lower()
+        print(f" Hub MAC updated: {hub_mac.lower()}")
+    elif hub_mac and not hub_id:
+        hub_id = hub_mac
+        
+    if hub_id and isinstance(hub_id, str):
+        cfg.setdefault("hub", {})["id"] = hub_id
+        print(f" Hub ID updated: {hub_id}")
 
-    # 3. Parent MAC (Valve)
-    if "parent_mac" in data:
-        parent_val = data["parent_mac"]
-        if isinstance(parent_val, str) and parent_val.count(':') == 5 and len(parent_val) == 17:
-            cfg.setdefault("parent", {})["mac"] = parent_val
-            print(f" Parent MAC updated: {parent_val}")
-        else:
-            cfg.setdefault("parent", {})["id"] = parent_val
-            cfg.setdefault("parent", {})["mac"] = "00:00:00:00:00:00"
-            print(f" Parent ID updated: {parent_val}")
+    # 3. Parent MAC / ID (Valve / Mesh Relay)
+    parent_mac = data.get("parent_mac")
+    parent_id = data.get("parent_device_id") or data.get("parent_id")
+    if parent_mac and isinstance(parent_mac, str) and parent_mac.count(':') == 5 and len(parent_mac) == 17:
+        cfg.setdefault("parent", {})["mac"] = parent_mac.lower()
+        print(f" Parent MAC updated: {parent_mac.lower()}")
+    elif parent_mac and not parent_id:
+        parent_id = parent_mac
+        
+    if parent_id and isinstance(parent_id, str):
+        cfg.setdefault("parent", {})["id"] = parent_id
+        print(f" Parent ID updated: {parent_id}")
         
     # 4. Custom Name
     if "custom_name" in data:
