@@ -348,8 +348,8 @@ def send_discovery_request():
     if _e is None:
         return False
 
-    # Enforce a 2-second rate limit on discovery requests
-    if time.time() - _last_pairing_tx_time < 2:
+    # Enforce a 4-second channel dwell time on discovery requests
+    if time.time() - _last_pairing_tx_time < 4:
         return False
     _last_pairing_tx_time = time.time()
 
@@ -370,7 +370,7 @@ def send_discovery_request():
     ch = channels[_pair_channel_idx % len(channels)]
     _pair_channel_idx += 1
     set_wifi_channel(ch)
-    print(f"Scanning Channel {ch}: Broadcasting DISCOVERY_REQ from {node_type}...")
+    print(f"Scanning Channel {ch}: Broadcasting DISCOVERY_REQ from {node_type} (4s dwell)...")
 
     envelope = message_builder.build_espnow_envelope(
         source_id,
@@ -395,8 +395,8 @@ def send_pairing_request():
     if _e is None:
         return
 
-    # Enforce a 2-second rate limit on pairing requests
-    if time.time() - _last_pairing_tx_time < 2:
+    # Enforce a 4-second channel dwell time on pairing requests
+    if time.time() - _last_pairing_tx_time < 4:
         return
     _last_pairing_tx_time = time.time()
 
@@ -440,7 +440,7 @@ def send_pairing_request():
         ch = channels[_pair_channel_idx % len(channels)]
         _pair_channel_idx += 1
         set_wifi_channel(ch)
-        print(f"Scanning Channel {ch}: Broadcasting PAIR_REQ from {node_type}...")
+        print(f"Scanning Channel {ch}: Broadcasting PAIR_REQ from {node_type} (4s dwell)...")
         send_ack_or_tele_to_hub("STATUS", payload, target_mac="ff:ff:ff:ff:ff:ff")
 
 
