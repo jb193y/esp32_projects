@@ -63,37 +63,41 @@ def led_thread():
     client_cfg = cfg.get("client", {})
     client_type = client_cfg.get("type", "client").lower()
     
-    pins_cfg = cfg.get(client_type, {}).get("pins", {})
-    if not pins_cfg:
-        pins_cfg = client_cfg.get("pins", {})
-        
-    status_pin_num = pins_cfg.get("status_led")
-
-    # Initialize NeoPixel RGB on GPIO 48 / 38 if available
+    # 1. NeoPixel RGB LED configuration
     np = None
     neo_used_pin = None
-    if has_neopixel:
-        for neo_pin in [48, 38]:
-            try:
-                np = neopixel.NeoPixel(Pin(neo_pin), 1)
-                neo_used_pin = neo_pin
-                break
-            except Exception:
-                pass
+    neopixel_pin = client_cfg.get("neopixel_pin")
+    if neopixel_pin is None:
+        board = str(client_cfg.get("board_type", "")).upper()
+        if "S3" in board:
+            neopixel_pin = 48
 
-    # Candidate GPIO pins for standard LEDs across ESP32 / ESP32-S3 boards
-    candidate_pins = [2, 21, 38, 47, 48]
-    if status_pin_num is not None and status_pin_num not in candidate_pins:
-        candidate_pins.insert(0, status_pin_num)
-
-    active_led_pins = []
-    for pin_num in candidate_pins:
-        if pin_num == neo_used_pin:
-            continue  # Avoid pin conflict with NeoPixel RGB
+    if has_neopixel and neopixel_pin is not None:
         try:
-            active_led_pins.append(Pin(pin_num, Pin.OUT))
+            np = neopixel.NeoPixel(Pin(int(neopixel_pin)), 1)
+            neo_used_pin = int(neopixel_pin)
         except Exception:
             pass
+
+    # 2. Single-Color Status LED configuration (explicit only, no blind probing)
+    active_led_pins = []
+    status_pin_num = client_cfg.get("status_led")
+    if status_pin_num is not None:
+        try:
+            status_pin_num = int(status_pin_num)
+            if status_pin_num != neo_used_pin:
+                active_led_pins.append(Pin(status_pin_num, Pin.OUT))
+        except Exception as e:
+            print(f" Failed to initialize status_led on Pin {status_pin_num}: {e}")
+
+    # Fallback to GPIO 2 only on classic non-S3 ESP32 DevKits if nothing configured
+    if np is None and not active_led_pins:
+        board = str(client_cfg.get("board_type", "")).upper()
+        if "S3" not in board and client_type != "valve":
+            try:
+                active_led_pins.append(Pin(2, Pin.OUT))
+            except Exception:
+                pass
 
     print(f" Universal LED Status Mode active: {len(active_led_pins)} GPIO pins, NeoPixel={np is not None} (Pin {neo_used_pin})")
 

@@ -7,6 +7,8 @@
     "board_type": "ESP32-S3-DevKit v1.0",
     "custom_name": "AgriPulse Master Hub",
     "firmware_version": "hub_v1.0.0",
+    "neopixel_pin": 48,
+    "status_led": null,
     "mode": "normal",
     "espnow_only": false,
     "espnow_test_peer": "dc:b4:d9:14:2d:50",
