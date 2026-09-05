@@ -1,4 +1,5 @@
 # main.py (Valve Controller)
+import network
 import _thread
 import time
 import random
@@ -10,7 +11,6 @@ import led_status
 import ble_manager
 import espnow_client
 import factory_reset
-
 import espnow_ota
 
 # State

@@ -31,7 +31,10 @@ except Exception as wifi_boot_err:
 print("Delaying for stability...")
 time.sleep(4)
 gc.collect()
-print(" Free Memory:", gc.mem_free(), "bytes")
+alloc = gc.mem_alloc()
+free = gc.mem_free()
+print(" Total Memory:", alloc + free, "bytes")
+print(" Free Memory:", free, "bytes")
 
 print(">>> HUB boot.py COMPLETED <<<")
 
