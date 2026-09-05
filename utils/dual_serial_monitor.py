@@ -198,11 +198,24 @@ def mqtt_monitor_worker(host, port, user, password, topics, stop_event):
                     pass
         time.sleep(2)
 
+# Color palette for multiple serial ports
+PORT_COLORS = [
+    "\033[96m",  # Bright Cyan
+    "\033[93m",  # Bright Yellow
+    "\033[92m",  # Bright Green
+    "\033[94m",  # Bright Blue
+    "\033[97m",  # Bright White
+    "\033[36m",  # Cyan
+    "\033[33m",  # Yellow
+    "\033[32m",  # Green
+]
+
 def main():
-    parser = argparse.ArgumentParser(description="Dual ESP32 Serial Monitor + MQTT Live Sub")
-    parser.add_argument("ports", nargs="*", default=[], help="Serial ports (e.g. COM20 COM21)")
+    parser = argparse.ArgumentParser(description="Multi-ESP32 Serial Monitor + MQTT Live Sub")
+    parser.add_argument("ports", nargs="*", default=[], help="Serial ports (e.g. COM20 COM21 COM11 COM22)")
+    parser.add_argument("-p", "--port", action="append", default=[], dest="explicit_ports", help="Serial port to monitor (can specify multiple)")
     parser.add_argument("--hub", default=None, help="Hub serial port (e.g. COM20)")
-    parser.add_argument("--vc", "--node", default=None, dest="node", help="Valve Controller / Node serial port (e.g. COM21)")
+    parser.add_argument("--vc", "--node", action="append", default=[], dest="nodes", help="Valve Controller / Node serial port(s)")
     parser.add_argument("--baud", type=int, default=115200, help="Baud rate (default: 115200)")
     
     # MQTT options
@@ -216,48 +229,67 @@ def main():
 
     args = parser.parse_args()
 
-    port1 = args.hub
-    port2 = args.node
+    # Collect all configured ports preserving order without duplicates
+    port_list = []
 
-    if len(args.ports) >= 2:
-        port1 = args.ports[0]
-        port2 = args.ports[1]
-    elif len(args.ports) == 1:
-        if not port1:
-            port1 = args.ports[0]
-        elif not port2:
-            port2 = args.ports[0]
+    def _add_port(p):
+        if p and p.upper() not in [x[0].upper() for x in port_list]:
+            port_list.append(p)
 
-    # Defaults if not specified
-    if not port1:
-        port1 = "COM20"
-    if not port2:
-        port2 = "COM21"
+    # 1. Hub port
+    hub_port = args.hub
+    if hub_port:
+        _add_port(hub_port)
+
+    # 2. Node ports
+    for np in args.nodes:
+        _add_port(np)
+
+    # 3. Explicit -p ports
+    for ep in args.explicit_ports:
+        _add_port(ep)
+
+    # 4. Positional ports (e.g. COM20 COM21 COM11)
+    for pos_p in args.ports:
+        _add_port(pos_p)
+
+    # Defaults if no ports specified at all
+    if not port_list:
+        port_list = ["COM20", "COM21"]
 
     topics = args.mqtt_topic or ["loc001/#", "farm/#"]
 
-    print("=" * 65)
-    print(f"  Dual Serial Monitor: {port1} (HUB) <==> {port2} (NODE)")
+    # Assign labels and colors
+    configured_devices = []
+    for idx, port in enumerate(port_list):
+        if (hub_port and port.upper() == hub_port.upper()) or (not hub_port and idx == 0 and "20" in port):
+            label = "HUB"
+            color = COLOR_HUB
+        else:
+            label = "NODE"
+            color = PORT_COLORS[idx % len(PORT_COLORS)]
+        configured_devices.append((port, label, color))
+
+    summary_str = " <==> ".join([f"{p} ({lbl})" for p, lbl, _ in configured_devices])
+
+    print("=" * 70)
+    print(f"  Multi-Serial Monitor ({len(configured_devices)} ports): {summary_str}")
     if args.mqtt_sub:
         print(f"  MQTT Monitor Active: {args.mqtt_host}:{args.mqtt_port} -> {', '.join(topics)}")
     print(f"  Baud rate: {args.baud} | Press Ctrl+C to stop")
-    print("=" * 65)
+    print("=" * 70)
 
     stop_event = threading.Event()
-    
-    t1 = threading.Thread(
-        target=read_serial_worker,
-        args=(port1, "HUB", COLOR_HUB, args.baud, stop_event),
-        daemon=True
-    )
-    t2 = threading.Thread(
-        target=read_serial_worker,
-        args=(port2, "NODE", COLOR_NODE, args.baud, stop_event),
-        daemon=True
-    )
+    threads = []
 
-    t1.start()
-    t2.start()
+    for port, label, color in configured_devices:
+        t = threading.Thread(
+            target=read_serial_worker,
+            args=(port, label, color, args.baud, stop_event),
+            daemon=True
+        )
+        t.start()
+        threads.append(t)
 
     if args.mqtt_sub:
         t_mqtt = threading.Thread(
@@ -266,6 +298,7 @@ def main():
             daemon=True
         )
         t_mqtt.start()
+        threads.append(t_mqtt)
 
     try:
         while True:
