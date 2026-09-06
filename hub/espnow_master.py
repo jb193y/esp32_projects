@@ -1061,11 +1061,12 @@ def espnow_receiver_thread(heartbeats=None):
                     active_ch = sta.config('channel')
                 except Exception:
                     active_ch = 4
-                hub_mac_str = bytes_to_mac(sta.config('mac'))
                 beacon_payload = {
                     "hub_mac": hub_mac_str,
                     "sender_mac": hub_mac_str,
-                    "channel": active_ch
+                    "channel": active_ch,
+                    "hop_count": 0,
+                    "valid_until": _discovery_active_until
                 }
                 try:
                     add_peer_safe(_e, b'\xff\xff\xff\xff\xff\xff')

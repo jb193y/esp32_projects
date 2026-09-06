@@ -33,9 +33,30 @@ _last_hub_rx_time = time.time()
 _last_pairing_tx_time = 0
 _stop_requested = False
 _next_wake_delay_ms = 0
+_discovery_awake_until = 0
+_relay_busy_until = 0
+_last_beacon_broadcast_time = 0
+_candidate_beacons = {}
+_discovery_lock_channel = None
+_candidate_settle_until = 0
 MAX_RX_BUFFER = 2048
 
 tx_queue = config.Queue()
+
+def touch_relay_activity(duration_sec=30):
+    global _relay_busy_until
+    _relay_busy_until = max(_relay_busy_until, int(time.time()) + duration_sec)
+
+def can_deep_sleep():
+    global _discovery_awake_until, _relay_busy_until
+    now = int(time.time())
+    if now < _discovery_awake_until:
+        return False
+    if now < _relay_busy_until:
+        return False
+    if not tx_queue.empty():
+        return False
+    return True
 
 def calculate_slot_jitter_ms(local_mac=None, tier=1):
     """
@@ -344,9 +365,27 @@ def send_direct_espnow(target_mac_str, target_id, msg_type, payload):
         return False
 
 def send_discovery_request():
-    global _e, _pair_channel_idx, _last_pairing_tx_time
+    global _e, _pair_channel_idx, _last_pairing_tx_time, _discovery_lock_channel, _candidate_settle_until, _candidate_beacons
     if _e is None:
         return False
+
+    # If locked onto a beacon's channel, wait for candidate beacons to settle before deciding
+    if _discovery_lock_channel is not None:
+        if time.time() < _candidate_settle_until:
+            return False
+        if _candidate_beacons:
+            best = min(_candidate_beacons.values(), key=lambda b: (b.get("hop_count", 99), b.get("rssi_rank", 0)))
+            print(f" Best parent selected from Beacons: {best['parent_mac']} (Hops to Hub: {best['hop_count']}) on Channel {best['channel']}")
+            config.update_config({
+                "hub": {"mac": best["hub_mac"]},
+                "parent": {"mac": best["parent_mac"]},
+                "wifi": {"channel": best["channel"]}
+            })
+            _candidate_beacons.clear()
+            _discovery_lock_channel = None
+            send_pairing_request()
+            return True
+        _discovery_lock_channel = None
 
     # Enforce a 4-second channel dwell time on discovery requests
     if time.time() - _last_pairing_tx_time < 4:
@@ -391,9 +430,24 @@ def send_discovery_request():
         return False
 
 def send_pairing_request():
-    global _e, _pair_channel_idx, _last_hub_rx_time, _last_pairing_tx_time
+    global _e, _pair_channel_idx, _last_hub_rx_time, _last_pairing_tx_time, _discovery_lock_channel, _candidate_settle_until, _candidate_beacons
     if _e is None:
         return
+
+    # If locked onto a beacon's channel, wait for candidate beacons to settle before deciding
+    if _discovery_lock_channel is not None:
+        if time.time() < _candidate_settle_until:
+            return
+        if _candidate_beacons:
+            best = min(_candidate_beacons.values(), key=lambda b: (b.get("hop_count", 99), b.get("rssi_rank", 0)))
+            print(f" Best parent selected from Beacons: {best['parent_mac']} (Hops to Hub: {best['hop_count']}) on Channel {best['channel']}")
+            config.update_config({
+                "hub": {"mac": best["hub_mac"]},
+                "parent": {"mac": best["parent_mac"]},
+                "wifi": {"channel": best["channel"]}
+            })
+            _candidate_beacons.clear()
+            _discovery_lock_channel = None
 
     # Enforce a 4-second channel dwell time on pairing requests
     if time.time() - _last_pairing_tx_time < 4:
@@ -528,6 +582,28 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                 send_discovery_request()
             else:
                 send_pairing_request()
+        else:
+            # Cascaded Beacon Re-broadcasting by Paired Relay Nodes during Discovery Window
+            if int(time.time()) < _discovery_awake_until:
+                if time.time() - _last_beacon_broadcast_time >= 2.0:
+                    _last_beacon_broadcast_time = time.time()
+                    current_cfg = config.load_config()
+                    p_mac = current_cfg.get("parent", {}).get("mac", "")
+                    h_mac = current_cfg.get("hub", {}).get("mac", "")
+                    ch = current_cfg.get("wifi", {}).get("channel", 6)
+                    my_hops = 1 if (p_mac == h_mac or not is_valid_mac(p_mac)) else 2
+                    send_direct_espnow(
+                        target_mac_str="ff:ff:ff:ff:ff:ff",
+                        target_id="broadcast",
+                        msg_type="BEACON",
+                        payload={
+                            "hub_mac": h_mac,
+                            "sender_mac": local_mac,
+                            "channel": ch,
+                            "hop_count": my_hops,
+                            "valid_until": _discovery_awake_until
+                        }
+                    )
 
         try:
             host, msg = _e.recv(500)
@@ -594,24 +670,42 @@ def client_listen_loop(heartbeats=None, on_cmd_received_fn=None):
                         hub_mac = b_pld.get("hub_mac", sender_mac)
                         parent_mac = b_pld.get("sender_mac", sender_mac)
                         b_ch = b_pld.get("channel")
+                        hop_count = b_pld.get("hop_count", 0)
+                        valid_until = b_pld.get("valid_until", 0)
 
                         current_cfg = config.load_config()
                         paired_hub = current_cfg.get("hub", {}).get("mac", "")
                         is_our_hub = (hub_mac.lower().replace(':', '') == paired_hub.lower().replace(':', ''))
 
-                        if not _paired or (is_our_hub and b_ch and current_cfg.get("wifi", {}).get("channel") != b_ch):
-                            print(f" Received BEACON from {'paired ' if _paired else ''}Hub {hub_mac} (Channel: {b_ch})")
+                        now_unix = config.get_unix_time()
+                        # If beacon has active validity, engage discovery awake lock
+                        if valid_until > now_unix or (valid_until > 0 and valid_until > int(time.time())):
+                            awake_sec = max(10, min(300, valid_until - now_unix if valid_until > now_unix else valid_until - int(time.time())))
+                            _discovery_awake_until = max(_discovery_awake_until, int(time.time()) + awake_sec)
+                            print(f" [Mesh Discovery] Discovery mode active! Holding radio awake for {awake_sec}s (hop={hop_count})")
+
+                        if _paired:
                             _last_hub_rx_time = time.time()
-                            try:
-                                current_parent = current_cfg.get("parent", {}).get("mac", "")
-                                parent_to_save = current_parent if (is_valid_mac(current_parent) and current_parent != "00:00:00:00:00:00" and current_parent != "ff:ff:ff:ff:ff:ff" and current_parent != hub_mac) else parent_mac
-                                upd = {"hub": {"mac": hub_mac}, "parent": {"mac": parent_to_save}}
-                                if b_ch:
-                                    upd["wifi"] = {"channel": b_ch}
-                                    set_wifi_channel(b_ch)
+                            if is_our_hub and b_ch and current_cfg.get("wifi", {}).get("channel") != b_ch:
+                                upd = {"wifi": {"channel": b_ch}}
+                                set_wifi_channel(b_ch)
                                 config.update_config(upd)
-                            except Exception as b_ex:
-                                print("Error handling BEACON:", b_ex)
+                        else:
+                            # Un-paired node receiving beacon: Lock channel and record candidate!
+                            if b_ch:
+                                if _discovery_lock_channel != b_ch:
+                                    _discovery_lock_channel = b_ch
+                                    _candidate_settle_until = time.time() + 3
+                                    set_wifi_channel(b_ch)
+                                    print(f" [Mesh Discovery] Beacon detected! Locked to Channel {b_ch}. Gathering candidates for 3s...")
+                                
+                                _candidate_beacons[parent_mac] = {
+                                    "hub_mac": hub_mac,
+                                    "parent_mac": parent_mac,
+                                    "channel": b_ch,
+                                    "hop_count": hop_count,
+                                    "rssi_rank": 0
+                                }
 
                     if msg_type == "ACK" and is_for_us:
                         ack_pld = packet.get("data") or packet.get("pld", {})

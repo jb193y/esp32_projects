@@ -150,6 +150,11 @@ def process_and_relay(packet):
 
         print(f" Relaying packet to next hop: {next_hop_mac}")
         try:
+            import espnow_client
+            espnow_client.touch_relay_activity(30)
+        except Exception:
+            pass
+        try:
             payload_str = ujson.dumps(packet["raw"])
             if _enqueue_fn is not None:
                 _enqueue_fn(next_hop_bytes, config.make_frame(payload_str), next_hop_mac, packet.get("dst", "unknown"))

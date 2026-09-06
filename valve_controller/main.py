@@ -501,8 +501,8 @@ def main():
                 time.sleep_ms(350)
                 break
 
-        # 4. If an OTA update session is in progress, stay awake until complete!
-        while ota_receiver.is_in_progress():
+        # 4. If an OTA update session is in progress, Discovery Mode is active, or Relay traffic is in-flight, stay awake!
+        while ota_receiver.is_in_progress() or not espnow_client.can_deep_sleep():
             if _cmd_queue:
                 cmd, args, sender_mac = _cmd_queue.pop(0)
                 execute_command(cmd, args, sender_mac)
@@ -510,7 +510,7 @@ def main():
 
         # 5. Wait for TX queue to finish transmitting any pending ACK frames
         tx_wait = time.ticks_ms()
-        while not espnow_client.tx_queue.empty() and time.ticks_diff(time.ticks_ms(), tx_wait) < 1000:
+        while not espnow_client.tx_queue.empty() and time.ticks_diff(time.ticks_ms(), tx_wait) < 1500:
             time.sleep_ms(20)
 
         # 6. Enter Closed-Loop Synced Deep Sleep
