@@ -303,6 +303,8 @@ def apply_port_config_overrides(target_dir, component_type, port):
         cfg["client"]["id"] = presets["id"]
     elif component_type in ("valve_controller", "vc"):
         cfg["client"]["id"] = f"valve_node_{digits}"
+    elif component_type in ("pump_controller", "pc"):
+        cfg["client"]["id"] = f"pump_node_{digits}"
     elif component_type == "hub":
         cfg["client"]["id"] = f"hub_master_{digits}"
     else:
@@ -339,7 +341,7 @@ def main():
     project_root = os.path.dirname(utils_dir)
     
     parser = argparse.ArgumentParser(description="Reliable persistent delta-sync & flash tool for ESP32 devices.")
-    parser.add_argument("type", help="The project component to deploy (e.g., 'hub', 'vc', 'valve_controller').")
+    parser.add_argument("type", help="The project component to deploy (e.g., 'hub', 'vc', 'pc').")
     parser.add_argument("port", help="The COM port of the ESP32 device (e.g., 'COM21').")
     parser.add_argument("--erase-flash", action="store_true", help="Erase entire flash and flash MicroPython firmware before syncing files.")
     parser.add_argument("--chip", default="esp32s3", help="ESP32 chip type (e.g., 'esp32s3', 'esp32'). Default is 'esp32s3'.")
@@ -351,6 +353,8 @@ def main():
     component_name = args.type
     if component_name in ("valve_controller", "vc"):
         component_name = "vc" if os.path.exists(os.path.join(project_root, "vc")) else "valve_controller"
+    elif component_name in ("pump_controller", "pc"):
+        component_name = "pc" if os.path.exists(os.path.join(project_root, "pc")) else "pump_controller"
 
     target_dir = os.path.join(project_root, component_name)
     if not os.path.exists(target_dir):

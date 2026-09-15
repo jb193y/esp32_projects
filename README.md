@@ -3,7 +3,7 @@
 This repository contains the MicroPython firmware, shared mesh libraries, configuration templates, and deployment utilities for AgriPulse ESP32 / ESP32-S3 controllers:
 - **Master Hub Controller** (`/hub`)
 - **Valve Controller (VC)** (`/vc`)
-- **Pump Controller** (`/pump_controller`)
+- **Pump Controller (PC)** (`/pc`)
 - **Shared Libraries & Mesh Protocols** (`/lib`)
 - **Deployment & Diagnostic Tooling** (`/utils`)
 
@@ -44,7 +44,7 @@ python utils/flash_esp32.py hub COM20
 
 #### Flash / Deploy Pump Controller (e.g., COM24):
 ```powershell
-python utils/flash_esp32.py pump_controller COM24
+python utils/flash_esp32.py pc COM24
 ```
 
 ---

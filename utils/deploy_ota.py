@@ -25,14 +25,16 @@ def sha256_file(path):
 def main():
     if len(sys.argv) < 2:
         print("❌ Error: Missing component name.")
-        print("Usage: python utils/deploy_ota.py [hub | vc | valve_controller] [optional_version]")
+        print("Usage: python utils/deploy_ota.py [hub | vc | pc] [optional_version]")
         sys.exit(1)
         
     component = sys.argv[1].lower()
     if component == "valve_controller":
         component = "vc" if os.path.exists(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "vc")) else "valve_controller"
-    elif component not in ("hub", "vc"):
-        print(f"❌ Error: Invalid component '{component}'. Must be 'hub' or 'vc'.")
+    elif component == "pump_controller":
+        component = "pc" if os.path.exists(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pc")) else "pump_controller"
+    elif component not in ("hub", "vc", "pc"):
+        print(f"❌ Error: Invalid component '{component}'. Must be 'hub', 'vc', or 'pc'.")
         sys.exit(1)
 
     utils_dir = os.path.dirname(os.path.abspath(__file__))
