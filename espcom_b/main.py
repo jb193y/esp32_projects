@@ -17,7 +17,7 @@ def make_frame(body):
 
 
 # Replace this with the actual MAC address of espcom_a.
-PEER_MAC = "3c:dc:75:6e:8f:64"
+PEER_MAC = "a0:f2:62:e0:02:d4"
 
 sta = network.WLAN(network.STA_IF)
 sta.active(True)
