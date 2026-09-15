@@ -9,14 +9,14 @@ import serial
 r"""
 Usage:
     # 1. Fast delta-sync (uploads only modified files):
-    python utils/flash_esp32.py valve_controller COM21
+    python utils/flash_esp32.py vc COM21
     python utils/flash_esp32.py hub COM20
 
     # 2. Complete Chip Erase + MicroPython Flash + Project Upload:
-    python utils/flash_esp32.py valve_controller COM4 --erase-flash
+    python utils/flash_esp32.py vc COM4 --erase-flash
 
     # 3. Clean Filesystem & Upload:
-    python utils/flash_esp32.py valve_controller COM21 --clean
+    python utils/flash_esp32.py vc COM21 --clean
 """
 
 def send_command(ser, cmd, timeout=5):
@@ -235,33 +235,36 @@ def run_erase_flash_and_firmware(port, chip="esp32s3", firmware_path=None, proje
     print("\nFirmware flashed successfully! Waiting for board initialization...")
     time.sleep(2.5)
 
-NODE_PORT_PRESETS = {
-    "valve_controller": {
-        "COM11": {
-            "id": "valve_node_11",
-            "custom_name": "COM11",
-            "parent_mac": "dc:b4:d9:14:23:3c",  # Direct child of Hub
-            "hub_mac": "dc:b4:d9:14:23:3c",
-        },
-        "COM21": {
-            "id": "valve_node_21",
-            "custom_name": "COM21",
-            "parent_mac": "dc:b4:d9:14:2d:ac",  # Child of COM11
-            "hub_mac": "dc:b4:d9:14:23:3c",
-        },
-        "COM25": {
-            "id": "valve_node_25",
-            "custom_name": "COM25",
-            "parent_mac": "dc:b4:d9:14:2d:50",  # Child of COM21
-            "hub_mac": "dc:b4:d9:14:23:3c",
-        },
-        "COM26": {
-            "id": "valve_node_26",
-            "custom_name": "COM26",
-            "parent_mac": "a0:f2:62:e0:02:d4",  # Child of COM25
-            "hub_mac": "dc:b4:d9:14:23:3c",
-        },
+VC_PRESETS = {
+    "COM11": {
+        "id": "valve_node_11",
+        "custom_name": "COM11",
+        "parent_mac": "dc:b4:d9:14:23:3c",  # Direct child of Hub
+        "hub_mac": "dc:b4:d9:14:23:3c",
     },
+    "COM21": {
+        "id": "valve_node_21",
+        "custom_name": "COM21",
+        "parent_mac": "dc:b4:d9:14:2d:ac",  # Child of COM11
+        "hub_mac": "dc:b4:d9:14:23:3c",
+    },
+    "COM25": {
+        "id": "valve_node_25",
+        "custom_name": "COM25",
+        "parent_mac": "dc:b4:d9:14:2d:50",  # Child of COM21
+        "hub_mac": "dc:b4:d9:14:23:3c",
+    },
+    "COM26": {
+        "id": "valve_node_26",
+        "custom_name": "COM26",
+        "parent_mac": "a0:f2:62:e0:02:d4",  # Child of COM25
+        "hub_mac": "dc:b4:d9:14:23:3c",
+    },
+}
+
+NODE_PORT_PRESETS = {
+    "vc": VC_PRESETS,
+    "valve_controller": VC_PRESETS,
     "hub": {
         "COM20": {
             "id": "hub_master_01",
@@ -298,7 +301,7 @@ def apply_port_config_overrides(target_dir, component_type, port):
     # Override node id and custom name
     if "id" in presets:
         cfg["client"]["id"] = presets["id"]
-    elif component_type == "valve_controller":
+    elif component_type in ("valve_controller", "vc"):
         cfg["client"]["id"] = f"valve_node_{digits}"
     elif component_type == "hub":
         cfg["client"]["id"] = f"hub_master_{digits}"
@@ -336,7 +339,7 @@ def main():
     project_root = os.path.dirname(utils_dir)
     
     parser = argparse.ArgumentParser(description="Reliable persistent delta-sync & flash tool for ESP32 devices.")
-    parser.add_argument("type", help="The project component to deploy (e.g., 'hub', 'valve_controller').")
+    parser.add_argument("type", help="The project component to deploy (e.g., 'hub', 'vc', 'valve_controller').")
     parser.add_argument("port", help="The COM port of the ESP32 device (e.g., 'COM21').")
     parser.add_argument("--erase-flash", action="store_true", help="Erase entire flash and flash MicroPython firmware before syncing files.")
     parser.add_argument("--chip", default="esp32s3", help="ESP32 chip type (e.g., 'esp32s3', 'esp32'). Default is 'esp32s3'.")
@@ -345,7 +348,11 @@ def main():
     parser.add_argument("--no-auto-config", action="store_true", help="Disable automatic COM port preset injection into config.json.")
     args = parser.parse_args()
 
-    target_dir = os.path.join(project_root, args.type)
+    component_name = args.type
+    if component_name in ("valve_controller", "vc"):
+        component_name = "vc" if os.path.exists(os.path.join(project_root, "vc")) else "valve_controller"
+
+    target_dir = os.path.join(project_root, component_name)
     if not os.path.exists(target_dir):
         print(f"Error: Target directory {target_dir} does not exist.")
         sys.exit(1)

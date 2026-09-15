@@ -92,7 +92,7 @@ def main():
     print("Entered raw REPL successfully.")
     
     # 3. Clean up files of the OTHER project to ensure clean swap
-    if project_dir == 'valve_controller':
+    if project_dir in ('valve_controller', 'vc'):
         # Remove Hub files if we are flashing a valve controller
         hub_files_to_remove = ['espnow_master.py', 'mqtt_client.py', 'network_manager.py', 'scheduler.py', 'nodes.json']
         print("Cleaning up Hub files from Valve Controller device...")

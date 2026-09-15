@@ -69,12 +69,13 @@ def main():
     
     # Files to upload
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    vc_dir = os.path.join(project_root, 'vc') if os.path.exists(os.path.join(project_root, 'vc')) else os.path.join(project_root, 'valve_controller')
     
     files = [
-        (os.path.join(project_root, 'valve_controller', 'config.defaults.json'), 'config.defaults.json'),
-        (os.path.join(project_root, 'valve_controller', 'config.json'), 'config.json'),
-        (os.path.join(project_root, 'valve_controller', 'boot.py'), 'boot.py'),
-        (os.path.join(project_root, 'valve_controller', 'main.py'), 'main.py'),
+        (os.path.join(vc_dir, 'config.defaults.json'), 'config.defaults.json'),
+        (os.path.join(vc_dir, 'config.json'), 'config.json'),
+        (os.path.join(vc_dir, 'boot.py'), 'boot.py'),
+        (os.path.join(vc_dir, 'main.py'), 'main.py'),
         (os.path.join(project_root, 'lib', 'config.py'), 'lib/config.py'),
         (os.path.join(project_root, 'lib', 'espnow_relay.py'), 'lib/espnow_relay.py'),
         (os.path.join(project_root, 'lib', 'espnow_client.py'), 'lib/espnow_client.py'),

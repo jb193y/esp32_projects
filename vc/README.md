@@ -10,7 +10,7 @@ From `esp32_projects`:
 
 ```powershell
 # Flash & sync all code + libraries to COM25
-python utils/flash_esp32.py valve_controller COM25
+python utils/flash_esp32.py vc COM25
 ```
 
 ---

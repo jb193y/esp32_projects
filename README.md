@@ -2,7 +2,7 @@
 
 This repository contains the MicroPython firmware, shared mesh libraries, configuration templates, and deployment utilities for AgriPulse ESP32 / ESP32-S3 controllers:
 - **Master Hub Controller** (`/hub`)
-- **Valve Controller (VC)** (`/valve_controller`)
+- **Valve Controller (VC)** (`/vc`)
 - **Pump Controller** (`/pump_controller`)
 - **Shared Libraries & Mesh Protocols** (`/lib`)
 - **Deployment & Diagnostic Tooling** (`/utils`)
@@ -34,7 +34,7 @@ cd "e:\00.0. Jayanti Baraiya - NSAShared\04.A ESP32\esp32_projects"
 
 #### Flash / Deploy Valve Controller (e.g., COM25 or COM11):
 ```powershell
-python utils/flash_esp32.py valve_controller COM25
+python utils/flash_esp32.py vc COM25
 ```
 
 #### Flash / Deploy Master Hub (e.g., COM20):
@@ -82,10 +82,10 @@ If flashing a brand new ESP32 / ESP32-S3 module that does not yet have MicroPyth
 ### Option A: All-in-One Flasher (Recommended)
 ```powershell
 # Complete Chip Erase + MicroPython Binary Flash + Application Code Sync:
-python utils/flash_esp32.py valve_controller COM4 --erase-flash
+python utils/flash_esp32.py vc COM4 --erase-flash
 
 # Or fast delta-sync for active development:
-python utils/flash_esp32.py valve_controller COM4
+python utils/flash_esp32.py vc COM4
 ```
 
 ### Option B: Manual Step-by-Step via esptool
@@ -97,14 +97,14 @@ python -m esptool --port COM4 --chip esp32s3 erase_flash
 python -m esptool --port COM4 --chip esp32s3 write_flash -z 0x0 ./firmware/ESP32_GENERIC_S3-20260824-v1.29.0.bin
 
 # 3. Deploy Application Code & Config
-python utils/flash_esp32.py valve_controller COM4
+python utils/flash_esp32.py vc COM4
 ```
 
 ---
 
 ## 6. Valve Controller Mesh Topology Configuration
 
-In `valve_controller/config.json`:
+In `vc/config.json`:
 
 ### Direct Hop to Hub (Level 1 Node):
 ```json
@@ -151,8 +151,8 @@ mpremote connect COM25 fs cp lib/led_status.py :lib/led_status.py
 mpremote connect COM25 fs cp lib/ble_manager.py :lib/ble_manager.py
 mpremote connect COM25 fs cp lib/ota.py :lib/ota.py
 mpremote connect COM25 fs cp lib/factory_reset.py :lib/factory_reset.py
-mpremote connect COM25 fs cp valve_controller/boot.py :boot.py
-mpremote connect COM25 fs cp valve_controller/config.json :config.json
-mpremote connect COM25 fs cp valve_controller/main.py :main.py
+mpremote connect COM25 fs cp vc/boot.py :boot.py
+mpremote connect COM25 fs cp vc/config.json :config.json
+mpremote connect COM25 fs cp vc/main.py :main.py
 mpremote connect COM25 soft-reset
 ```
