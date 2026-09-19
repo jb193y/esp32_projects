@@ -97,7 +97,7 @@ python -m esptool --port COM4 --chip esp32s3 erase_flash
 python -m esptool --port COM4 --chip esp32s3 write_flash -z 0x0 ./firmware/ESP32_GENERIC_S3-20260824-v1.29.0.bin
 
 # 3. Deploy Application Code & Config
-python utils/flash_esp32.py vc COM4
+python utils/flash_esp32.py vc COM4 --force
 ```
 
 ---
