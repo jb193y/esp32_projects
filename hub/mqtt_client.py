@@ -475,15 +475,22 @@ def mqtt_thread(heartbeats=None):
             
         if not _is_connected:
             try:
-                broker_host = mqtt_cfg.get("server") or mqtt_cfg.get("broker") or "10.10.10.211"
-                print(f"Connecting to MQTT Broker: {broker_host}...")
+                broker_host = mqtt_cfg.get("server") or mqtt_cfg.get("broker") or "mqtt.uxpreon.com"
+                use_ssl = mqtt_cfg.get("ssl", False) or mqtt_cfg.get("port") == 8883
+                ssl_params = mqtt_cfg.get("ssl_params")
+                if use_ssl and not ssl_params:
+                    ssl_params = {"server_hostname": broker_host}
+                port = mqtt_cfg.get("port", 8883 if use_ssl else 1883)
+                print(f"Connecting to MQTT Broker: {broker_host}:{port} (SSL={use_ssl})...")
                 _client = MQTTClient(
                     client_id=client_id,
                     server=broker_host,
-                    port=mqtt_cfg.get("port", 1883),
+                    port=port,
                     user=mqtt_cfg.get("user", ""),
                     password=mqtt_cfg.get("password", ""),
-                    keepalive=mqtt_cfg.get("keepalive", 20)
+                    keepalive=mqtt_cfg.get("keepalive", 20),
+                    ssl=use_ssl,
+                    ssl_params=ssl_params if use_ssl else None
                 )
                 
                 # Configure Last Will and Testament (LWT) only for commissioned devices in normal mode

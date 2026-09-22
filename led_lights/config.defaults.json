@@ -9,7 +9,8 @@
     "num_pixels": 1
   },
   "mqtt": {
-    "server": "10.10.10.210",
-    "port": 1883
+    "server": "mqtt.uxpreon.com",
+    "port": 8883,
+    "ssl": true
   }
 }

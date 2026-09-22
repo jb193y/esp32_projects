@@ -31,8 +31,9 @@
     ]
   },
   "mqtt": {
-    "server": "10.10.10.211",
-    "port": 1883,
+    "server": "mqtt.uxpreon.com",
+    "port": 8883,
+    "ssl": true,
     "user": "mss_client",
     "password": "Xgs7%67$!@#_",
     "keepalive": 120,

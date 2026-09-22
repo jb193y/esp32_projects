@@ -101,22 +101,26 @@ def connect_mqtt(mqtt_cfg, client_id):
         print("umqtt library is not available.")
         return False
         
-    server = mqtt_cfg.get("server", "192.168.1.100")
-    port = mqtt_cfg.get("port", 1883)
+    server = mqtt_cfg.get("server", "mqtt.uxpreon.com")
+    use_ssl = mqtt_cfg.get("ssl", False) or mqtt_cfg.get("port") == 8883
+    port = mqtt_cfg.get("port", 8883 if use_ssl else 1883)
     user = mqtt_cfg.get("user")
     password = mqtt_cfg.get("password")
     
-    print(f"Connecting to MQTT Broker: {server}:{port}...")
+    print(f"Connecting to MQTT Broker: {server}:{port} (SSL={use_ssl})...")
     led_status.set_status("MQTT_CONNECTING")
     
     try:
+        ssl_params = {"server_hostname": server} if use_ssl else None
         mqtt_client = MQTTClient(
             client_id=client_id,
             server=server,
             port=port,
             user=user,
             password=password,
-            keepalive=60
+            keepalive=60,
+            ssl=use_ssl,
+            ssl_params=ssl_params
         )
         mqtt_client.set_callback(on_message)
         mqtt_client.connect()
