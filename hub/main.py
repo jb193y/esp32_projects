@@ -87,9 +87,9 @@ def main():
         # 6.1 Start WAN / Wi-Fi thread first so WPA2 AES handshake completes without memory contention
         _thread.start_new_thread(network_manager.wan_thread, (heartbeats,))
         
-        # Wait up to 6 seconds for initial Wi-Fi connection to lock channel and finish AES handshake
+        # Wait up to 16 seconds for initial Wi-Fi connection to lock channel and finish AES handshake
         start_conn_wait = time.time()
-        while time.time() - start_conn_wait < 6:
+        while time.time() - start_conn_wait < 16:
             if network_manager.is_connected():
                 break
             if network_manager.startup_failed():
