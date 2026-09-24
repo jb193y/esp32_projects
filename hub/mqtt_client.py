@@ -514,6 +514,8 @@ def mqtt_thread(heartbeats=None):
                     except Exception as lwt_err:
                         print("Failed to set Last Will:", lwt_err)
 
+                import gc
+                gc.collect()
                 _client.set_callback(on_message)
                 _client.connect()
                 _is_connected = True
