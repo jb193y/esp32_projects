@@ -94,9 +94,9 @@ def connect_wifi(networks, wlan=None, timeout=15):
             continue
         
         # Wait for connection
-        start_time = time.time()
+        start_time = time.ticks_ms()
         while not wlan.isconnected():
-            if time.time() - start_time > timeout:
+            if time.ticks_diff(time.ticks_ms(), start_time) > timeout * 1000:
                 st = None
                 try:
                     st = wlan.status()

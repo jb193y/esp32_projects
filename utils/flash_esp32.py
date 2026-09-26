@@ -45,15 +45,13 @@ def enter_raw_repl(ser):
     time.sleep(0.2)
     ser.reset_input_buffer()
     
-    # Send quick interrupt probe
-    ser.write(b'\x03\x03')
-    time.sleep(0.3)
-    quick_resp = ser.read(ser.in_waiting or 100)
-    
-    # If board responded, try entering raw REPL immediately
-    if quick_resp:
+    # Try entering raw REPL for awake boards
+    for _ in range(3):
+        ser.write(b'\r\x03\x03')
+        time.sleep(0.2)
+        ser.reset_input_buffer()
         ser.write(b'\x01')
-        time.sleep(0.4)
+        time.sleep(0.3)
         resp = ser.read(ser.in_waiting or 200)
         if b'raw REPL' in resp:
             print("Connected to Raw REPL (active mode).")
@@ -191,14 +189,69 @@ def upload_file_stream(ser, local_path, remote_path):
         
     send_command(ser, f"import ubinascii\nf = open('{remote_path}', 'wb')\n")
     
-    # 192 raw bytes -> exactly 256 base64 chars without padding artifacts
-    raw_chunk_size = 192
+    # 64 raw bytes -> 88 base64 chars to stay safely under the 128-byte UART RX FIFO buffer
+    raw_chunk_size = 64
     for i in range(0, len(data), raw_chunk_size):
         raw_chunk = data[i:i+raw_chunk_size]
         b64_chunk = binascii.b2a_base64(raw_chunk).decode('ascii').strip()
         send_command(ser, f"f.write(ubinascii.a2b_base64('{b64_chunk}'))\n")
+        time.sleep(0.01)
         
     send_command(ser, "f.close()\n")
+
+def _find_mpy_cross():
+    import shutil
+    try:
+        import mpy_cross
+        return "module"
+    except ImportError:
+        pass
+        
+    p = shutil.which("mpy-cross")
+    if p and os.path.exists(p):
+        return p
+        
+    candidates = [
+        os.path.join(os.path.dirname(sys.executable), "mpy-cross.exe"),
+        os.path.join(os.path.dirname(sys.executable), "Scripts", "mpy-cross.exe"),
+        r"C:\Users\aziladmin\.conda\envs\esp32\Scripts\mpy-cross.exe",
+        os.path.abspath(".venv/Scripts/mpy-cross.exe"),
+        r"C:\Users\aziladmin\AppData\Roaming\Python\Python313\Scripts\mpy-cross.exe",
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return None
+
+def compile_to_mpy(local_path):
+    """Compile a .py file to .mpy bytecode using mpy-cross if available."""
+    import subprocess
+    base = os.path.basename(local_path)
+    if base in ('boot.py', 'main.py') or not local_path.endswith('.py'):
+        return local_path, False
+
+    mpy_path = local_path[:-3] + '.mpy'
+    tool = _find_mpy_cross()
+    if tool == "module":
+        try:
+            import mpy_cross
+            proc = mpy_cross.run(local_path)
+            if proc.wait() == 0 and os.path.exists(mpy_path):
+                return mpy_path, True
+        except Exception as e:
+            print(f" [mpy-cross notice] Error compiling {base} via module: {e}")
+    elif tool:
+        try:
+            res = subprocess.run([tool, local_path], capture_output=True)
+            if res.returncode == 0 and os.path.exists(mpy_path):
+                return mpy_path, True
+            else:
+                print(f" [mpy-cross notice] Tool returned {res.returncode} for {base}: {res.stderr.decode('utf-8', errors='ignore')}")
+        except Exception as e:
+            print(f" [mpy-cross notice] Error compiling {base} via {tool}: {e}")
+
+    print(f" [mpy-cross notice] Could not compile {base}, keeping .py")
+    return local_path, False
 
 def run_erase_flash_and_firmware(port, chip="esp32s3", firmware_path=None, project_root="."):
     import subprocess
@@ -348,6 +401,7 @@ def main():
     parser.add_argument("--firmware", default=None, help="Path to MicroPython firmware .bin file. Defaults to latest in ./firmware/.")
     parser.add_argument("--clean", "--erase-fs", action="store_true", dest="clean_fs", help="Wipe all files on device filesystem before sync.")
     parser.add_argument("--no-auto-config", action="store_true", help="Disable automatic COM port preset injection into config.json.")
+    parser.add_argument("--no-mpy", action="store_true", help="Disable .mpy bytecode compilation (upload raw .py source).")
     args = parser.parse_args()
 
     component_name = args.type
@@ -387,6 +441,9 @@ def main():
             
         # Compile local expected files
         expected_files = {}
+        use_mpy = not args.no_mpy
+        if use_mpy:
+            print("Bytecode pre-compilation enabled (.mpy).")
         
         # Project configs
         for f in glob.glob(os.path.join(target_dir, 'config*.json')):
@@ -397,12 +454,23 @@ def main():
         for f in glob.glob(os.path.join(target_dir, '*.py')):
             basename = os.path.basename(f)
             if basename not in ('flash_esp32.py', 'verify_device.py', 'pack_code.py', 'unpack_code.py'):
-                expected_files[basename] = f
+                if use_mpy:
+                    compiled_path, is_mpy = compile_to_mpy(f)
+                    remote_name = (basename[:-3] + '.mpy') if is_mpy else basename
+                    expected_files[remote_name] = compiled_path
+                else:
+                    expected_files[basename] = f
                 
         # Shared lib python files
         for f in glob.glob(os.path.join(project_root, 'lib', '*.py')):
-            rel = f"lib/{os.path.basename(f)}"
-            expected_files[rel] = f
+            basename = os.path.basename(f)
+            rel = f"lib/{basename}"
+            if use_mpy:
+                compiled_path, is_mpy = compile_to_mpy(f)
+                remote_name = f"lib/{basename[:-3]}.mpy" if is_mpy else rel
+                expected_files[remote_name] = compiled_path
+            else:
+                expected_files[rel] = f
             
         # --- 3. Clean up unwanted files ---
         preserve_list = set() if args.clean_fs else {'events.jsonl', 'faults.jsonl', 'config.json'}

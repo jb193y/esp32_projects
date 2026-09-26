@@ -67,13 +67,12 @@ def main():
     print("Booting into STA normal operations...")
     import network_manager
     import mqtt_client
-    import espnow_master
-    import scheduler
 
     led_status.set_status("WIFI_CONNECTING")
     gc.collect()
     
     if espnow_only:
+        import espnow_master
         print("ESP-NOW-only test mode: WAN, MQTT, and scheduler disabled")
         heartbeats.pop("network", None)
         heartbeats.pop("mqtt", None)
@@ -82,14 +81,12 @@ def main():
         receiver_fn = espnow_master.espnow_test_receiver_thread
         _thread.start_new_thread(receiver_fn, (heartbeats,))
     else:
-        mqtt_client.register_cmd_dispatcher(espnow_master.dispatch_command_from_mqtt)
-        
         # 6.1 Start WAN / Wi-Fi thread first so WPA2 AES handshake completes without memory contention
         _thread.start_new_thread(network_manager.wan_thread, (heartbeats,))
         
         # Wait up to 16 seconds for initial Wi-Fi connection to lock channel and finish AES handshake
-        start_conn_wait = time.time()
-        while time.time() - start_conn_wait < 16:
+        start_conn_wait = time.ticks_ms()
+        while time.ticks_diff(time.ticks_ms(), start_conn_wait) < 16000:
             if network_manager.is_connected():
                 break
             if network_manager.startup_failed():
@@ -101,13 +98,38 @@ def main():
             return
             
         gc.collect()
-        time.sleep_ms(200)
+        time.sleep_ms(100)
         
-        # 6.2 Start MQTT thread
+        # 6.2 Start MQTT thread with 10KB stack for TLS 1.3 handshake while heap is clean and unfragmented
+        try:
+            _thread.stack_size(10240)
+        except Exception:
+            pass
         _thread.start_new_thread(mqtt_client.mqtt_thread, (heartbeats,))
-        time.sleep_ms(200)
+        try:
+            _thread.stack_size(6144)
+        except Exception:
+            pass
+        
+        # Give MQTT a few seconds to complete its TLS handshake before importing other large modules
+        start_mqtt_wait = time.ticks_ms()
+        while time.ticks_diff(time.ticks_ms(), start_mqtt_wait) < 15000:
+            if mqtt_client.is_connected():
+                break
+            time.sleep_ms(250)
 
-        # 6.3 Start Scheduler
+        gc.collect()
+        
+        # 6.3 Import and initialize ESP-NOW Master & Scheduler
+        print(f"Loading ESP-NOW Master and Scheduler (Free Heap: {gc.mem_free()})...")
+        import espnow_master
+        gc.collect()
+        import scheduler
+        gc.collect()
+
+        mqtt_client.register_cmd_dispatcher(espnow_master.dispatch_command_from_mqtt)
+
+        # Start Scheduler
         _thread.start_new_thread(scheduler.scheduler_thread, (heartbeats, espnow_master.send_espnow_msg))
         time.sleep_ms(200)
 
@@ -124,4 +146,6 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        print("Main loop error:", e)
+        import sys
+        print("Main loop error:")
+        sys.print_exception(e)

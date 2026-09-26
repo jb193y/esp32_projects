@@ -1,28 +1,7 @@
 # mqtt_client.py (Hub)
 import sys
+import gc
 import usocket
-
-# Enforce a 3.0-second socket timeout on all connection sockets to prevent
-# blocking MQTT connects from starving CPU cores and disrupting ESP-NOW.
-def TimeoutSocket(*args, **kwargs):
-    sock = usocket.socket(*args, **kwargs)
-    try:
-        sock.settimeout(3.0)
-    except Exception:
-        pass
-    return sock
-
-class UsocketWrapper:
-    def __init__(self, orig):
-        self._orig = orig
-    def __getattr__(self, name):
-        if name == 'socket':
-            return TimeoutSocket
-        return getattr(self._orig, name)
-
-sys.modules['usocket'] = UsocketWrapper(usocket)
-sys.modules['socket'] = sys.modules['usocket']
-
 from umqtt.simple import MQTTClient
 import ujson
 import time
@@ -474,54 +453,95 @@ def mqtt_thread(heartbeats=None):
             continue
             
         if not _is_connected:
-            try:
-                broker_host = mqtt_cfg.get("server") or mqtt_cfg.get("broker") or "mqtt.uxpreon.com"
-                use_ssl = mqtt_cfg.get("ssl", False) or mqtt_cfg.get("port") == 8883
-                ssl_params = mqtt_cfg.get("ssl_params")
-                if use_ssl and not ssl_params:
-                    ssl_params = {"server_hostname": broker_host}
-                port = mqtt_cfg.get("port", 8883 if use_ssl else 1883)
-                print(f"Connecting to MQTT Broker: {broker_host}:{port} (SSL={use_ssl})...")
-                _client = MQTTClient(
-                    client_id=client_id,
-                    server=broker_host,
-                    port=port,
-                    user=mqtt_cfg.get("user", ""),
-                    password=mqtt_cfg.get("password", ""),
-                    keepalive=mqtt_cfg.get("keepalive", 20),
-                    ssl=use_ssl,
-                    ssl_params=ssl_params if use_ssl else None
-                )
+            primary_host = mqtt_cfg.get("server") or mqtt_cfg.get("broker") or "mqtt.uxpreon.com"
+            fallback_host = mqtt_cfg.get("fallback_server") or mqtt_cfg.get("fallback_host") or "10.10.10.211"
+            
+            candidates = [primary_host]
+            if fallback_host and fallback_host not in candidates:
+                candidates.append(fallback_host)
                 
-                # Configure Last Will and Testament (LWT) only for commissioned devices in normal mode
-                client_mode = client_info.get("mode", "normal")
-                if client_mode == "normal":
-                    lwt_payload = ujson.dumps(message_builder.build_mqtt_payload(
-                        source=client_id,
-                        target="backend_api",
-                        msg_type="STATUS",
-                        data={
-                            "device_id": client_id,
-                            "status": "offline",
-                            "reason": "keepalive_timeout"
-                        },
-                        route_transport="MQTT",
-                        route_id="lwt",
-                        hops=[client_id]
-                    ))
-                    try:
-                        _client.set_last_will(status_topic.encode('utf-8'), lwt_payload.encode('utf-8'), retain=False)
-                    except Exception as lwt_err:
-                        print("Failed to set Last Will:", lwt_err)
+            connected_ok = False
+            for broker_host in candidates:
+                try:
+                    use_ssl = mqtt_cfg.get("ssl", False) or mqtt_cfg.get("port") == 8883
+                    port = mqtt_cfg.get("port", 8883 if use_ssl else 1883)
+                    gc.collect()
+                    print(f"Connecting to MQTT Broker: {broker_host}:{port} (SSL={use_ssl}, Free Heap: {gc.mem_free()})...")
+                    ssl_obj = False
+                    if use_ssl:
+                        try:
+                            import ssl
+                            ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                            ssl_ctx.verify_mode = ssl.CERT_NONE
+                            ssl_obj = ssl_ctx
+                            print(" [MQTT] Using SSLContext (verify_mode=CERT_NONE)")
+                        except Exception as ctx_err:
+                            print(" [MQTT] SSLContext notice:", ctx_err)
+                            ssl_obj = True
+                    
+                    # SNI should match the certificate hostname even if connecting via local IP
+                    sni_name = primary_host
+                    ssl_params = {"server_hostname": sni_name} if use_ssl else None
+                    
+                    _client = MQTTClient(
+                        client_id=client_id,
+                        server=broker_host,
+                        port=port,
+                        user=mqtt_cfg.get("user", ""),
+                        password=mqtt_cfg.get("password", ""),
+                        keepalive=mqtt_cfg.get("keepalive", 20),
+                        ssl=ssl_obj,
+                        ssl_params=ssl_params if (use_ssl and ssl_obj is True) else None
+                    )
+                    
+                    # Configure Last Will and Testament (LWT) only for commissioned devices in normal mode
+                    client_mode = client_info.get("mode", "normal")
+                    if client_mode == "normal":
+                        lwt_payload = ujson.dumps(message_builder.build_mqtt_payload(
+                            source=client_id,
+                            target="backend_api",
+                            msg_type="STATUS",
+                            data={
+                                "device_id": client_id,
+                                "status": "offline",
+                                "reason": "keepalive_timeout"
+                            },
+                            route_transport="MQTT",
+                            route_id="lwt",
+                            hops=[client_id]
+                        ))
+                        try:
+                            _client.set_last_will(status_topic.encode('utf-8'), lwt_payload.encode('utf-8'), retain=False)
+                        except Exception as lwt_err:
+                            print("Failed to set Last Will:", lwt_err)
 
-                import gc
-                gc.collect()
-                _client.set_callback(on_message)
-                _client.connect()
-                _is_connected = True
-                led_status.set_status("MQTT_CONNECTED")
-                print(" MQTT Connected!")
-                
+                    gc.collect()
+                    _client.set_callback(on_message)
+                    print(f" [MQTT] Attempting connection to {broker_host}:{port}...")
+                    _client.connect()
+                    _is_connected = True
+                    connected_ok = True
+                    led_status.set_status("MQTT_CONNECTED")
+                    print(f" [MQTT] Connected successfully to {broker_host}:{port}!")
+                    break
+                except Exception as host_err:
+                    print(f" [MQTT] Connection attempt to {broker_host} failed: {host_err}")
+                    if _client is not None:
+                        try:
+                            if hasattr(_client, 'sock') and _client.sock is not None:
+                                _client.sock.close()
+                        except Exception:
+                            pass
+                        _client = None
+                    gc.collect()
+
+            if not connected_ok:
+                _is_connected = False
+                led_status.set_status("WIFI_CONNECTED")
+                time.sleep(10)
+                continue
+
+            try:
                 # Subscribe to command, configuration, and provisioning topics
                 cmd_topic = f"{site}/{group}/+/+/command"
                 prov_hub_topic = f"{site}/{group}/hub/{client_id}/provisioning"
@@ -580,12 +600,9 @@ def mqtt_thread(heartbeats=None):
                     except Exception:
                         pass
                 
-            except Exception as e:
-                print("MQTT connection failed:", e)
+            except Exception as post_err:
+                print(" [MQTT] Post-connect setup failed:", post_err)
                 _is_connected = False
-                led_status.set_status("WIFI_CONNECTED")
-                time.sleep(10)
-                continue
                 
         # Check for incoming messages non-blockingly
         try:

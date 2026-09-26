@@ -1,2 +1,17 @@
 /.vscode
 /02. Controls.code-workspace
+
+# Bytecode & Compiler Artifacts
+*.mpy
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Logs & temp files
+*.log
+scratch/
