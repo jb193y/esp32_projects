@@ -204,38 +204,76 @@ def parse_datetime_to_epoch(date_str, time_str):
             return 0
 
 def calculate_next_run(schedule):
-    freq = schedule.get("frequency_days", 1)
-    if freq < 1:
-        freq = 1
-    step = freq * 86400
-        
-    start_epoch = parse_datetime_to_epoch(schedule.get("start_date", "2026-01-01"), schedule.get("start_time", "00:00"))
-    if start_epoch == 0:
-        return 0
-        
     now = config.get_unix_time()
     last_run = schedule.get("last_run_time", 0)
-    lead_window = schedule.get("lead_window_sec", 0)
-    
-    # Start at the configured start date and time
-    next_time = start_epoch
-    
-    # Align next_time to the slot sequence: start_epoch + k * step
-    if now > start_epoch:
-        diff = now - start_epoch
-        k = diff // step
-        next_time = start_epoch + k * step
-        
-    # Ensure next_time is strictly after last_run
-    while next_time <= last_run:
-        next_time += step
-        
-    # Early-run safeguard: if last_run is close to next_time (within the lead_window_sec),
-    # it means this slot has already been run early. Advance to the next slot.
-    if last_run > 0 and (next_time - last_run) <= lead_window:
-        next_time += step
-        
-    return next_time
+    if schedule.get("is_interval", False):
+        interval = schedule.get("interval_seconds", 0)
+        if not interval:
+            # Backward compatibility for schedules stored before interval_seconds was added.
+            value = str(schedule.get("interval_val", "")).lower().replace("every", "").strip()
+            parts = value.split()
+            try:
+                count = int(parts[0])
+                unit = parts[1] if len(parts) > 1 else "days"
+                multiplier = 60 if unit.startswith("min") else 86400 if unit.startswith("day") else 3600
+                interval = count * multiplier
+            except Exception:
+                interval = 86400
+        if interval < 60:
+            interval = 60
+
+        anchor = schedule.get("created_at_epoch", now)
+        next_time = anchor + interval
+        if next_time <= now:
+            next_time += ((now - next_time) // interval + 1) * interval
+        if last_run >= next_time:
+            next_time += ((last_run - next_time) // interval + 1) * interval
+        lead_window = schedule.get("lead_window_sec", 0)
+        if last_run > 0 and next_time > last_run and (next_time - last_run) <= lead_window:
+            next_time += interval
+        return next_time
+
+    # Fixed-time schedules store weekdays as Monday=0 through Sunday=6.
+    days_value = schedule.get("days") or "0,1,2,3,4,5,6"
+    day_names = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+    selected_days = []
+    for token in str(days_value).replace("[", "").replace("]", "").split(","):
+        token = token.strip().strip("'\"").lower()
+        if token.isdigit() and 0 <= int(token) <= 6:
+            selected_days.append(int(token))
+        else:
+            for day_index, day_name in enumerate(day_names):
+                if token.startswith(day_name):
+                    selected_days.append(day_index)
+                    break
+    if not selected_days:
+        selected_days = list(range(7))
+
+    time_parts = str(schedule.get("start_time", "06:00")).split(":")
+    try:
+        hour = int(time_parts[0])
+        minute = int(time_parts[1])
+        if hour > 23 or minute > 59:
+            return 0
+    except Exception:
+        return 0
+
+    try:
+        local_now = time.localtime(now - 946684800)
+        year, month, day = local_now[0], local_now[1], local_now[2]
+        weekday = local_now[6]
+        for offset in range(8):
+            if (weekday + offset) % 7 not in selected_days:
+                continue
+            candidate = time.mktime((year, month, day + offset, hour, minute, 0, 0, 0)) + 946684800
+            if candidate > now and candidate > last_run:
+                lead_window = schedule.get("lead_window_sec", 0)
+                if last_run > 0 and (candidate - last_run) <= lead_window:
+                    continue
+                return candidate
+    except Exception:
+        return 0
+    return 0
 
 def check_and_trigger_schedules():
     schedules = load_schedules()

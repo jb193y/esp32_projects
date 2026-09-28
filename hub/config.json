@@ -35,8 +35,8 @@
     "fallback_server": "api.uxpreon.com",
     "port": 8883,
     "ssl": true,
-    "user": "mss_client",
-    "password": "Xgs7%67$!@#_",
+    "user": "",
+    "password": "",
     "keepalive": 120,
     "telemetry_interval_sec": 60
   },
