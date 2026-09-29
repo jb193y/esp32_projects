@@ -260,6 +260,11 @@ def start_provisioning():
                     pass
 
                 update_device_config(provision_data)
+                try:
+                    save_ack = ujson.dumps({"status": "saved", "message": "Configuration and credentials saved successfully", "rebooting": True}).encode('utf-8')
+                    ble_instance.gatts_write(read_handle, save_ack)
+                except Exception:
+                    pass
                 time.sleep(1)
                 try:
                     if ble_instance is not None:
