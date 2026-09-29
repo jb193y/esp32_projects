@@ -459,12 +459,17 @@ def mqtt_thread(heartbeats=None):
             candidates = [primary_host]
             if fallback_host and fallback_host not in candidates:
                 candidates.append(fallback_host)
+            if "10.10.10.211" not in candidates:
+                candidates.append("10.10.10.211")
                 
             connected_ok = False
             for broker_host in candidates:
                 try:
                     use_ssl = mqtt_cfg.get("ssl", False) or mqtt_cfg.get("port") == 8883
                     port = mqtt_cfg.get("port", 8883 if use_ssl else 1883)
+                    if broker_host == "10.10.10.211":
+                        use_ssl = False
+                        port = 1883
                     gc.collect()
                     print(f"Connecting to MQTT Broker: {broker_host}:{port} (SSL={use_ssl}, Free Heap: {gc.mem_free()})...")
                     ssl_obj = False
